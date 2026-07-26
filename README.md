@@ -1,6 +1,7 @@
 # Daily Reading Agent
 
 Phase 1 collects RSS entries, extracts full article text, and stores it in PostgreSQL.
+Phase 2 filters and scores extracted articles and saves a deterministic daily list.
 
 ## Run locally
 

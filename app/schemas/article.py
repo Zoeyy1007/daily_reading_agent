@@ -15,6 +15,8 @@ class ArticleRead(BaseModel):
     published_at: datetime | None
     fetched_at: datetime | None
     word_count: int | None
+    language: str | None
+    content_type: str | None
     status: str
     extractor_used: str | None
     extraction_error: str | None

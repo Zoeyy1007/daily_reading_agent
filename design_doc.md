@@ -215,6 +215,22 @@ story\_cluster\_members
 \- similarity\_score  
 \- relationship
 
+## article retrieval strategy
+1. SQL filters
+   date, language, source, length, status
+
+2. Keyword/full-text search
+   names, events, exact claims
+
+3. pgvector similarity
+   related stories, liked-content similarity
+
+4. Reranking
+   combine evidence quality, freshness, relevance
+
+5. LLM
+   compare retrieved claims or explain selection
+
 ## Phases and stages
 
 ### Phase 1

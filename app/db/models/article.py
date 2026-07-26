@@ -19,6 +19,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.db.models.daily_reading import DailyReadingItem
     from app.db.models.source import Source
 
 
@@ -61,6 +62,8 @@ class Article(Base):
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     word_count: Mapped[int | None] = mapped_column(Integer)
     content_hash: Mapped[str | None] = mapped_column(String(64))
+    language: Mapped[str | None] = mapped_column(String(12))
+    content_type: Mapped[str | None] = mapped_column(String(30))
     status: Mapped[str] = mapped_column(
         String(20), default=ArticleStatus.DISCOVERED.value
     )
@@ -74,3 +77,6 @@ class Article(Base):
     )
 
     source: Mapped["Source"] = relationship(back_populates="articles")
+    reading_list_items: Mapped[list["DailyReadingItem"]] = relationship(
+        back_populates="article"
+    )
