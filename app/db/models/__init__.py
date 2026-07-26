@@ -4,13 +4,33 @@ from app.db.models.daily_reading import (
     DailyReadingList,
     DailyReadingStatus,
 )
+from app.db.models.feedback import (
+    ArticleFeature,
+    ArticleFeatureType,
+    FeedbackEvent,
+    FeedbackEventType,
+    FeedbackReason,
+    PreferenceFeature,
+    SavedArticle,
+)
+from app.db.models.publisher import Publisher
 from app.db.models.source import Source
+from app.db.models.user import User
 
 __all__ = [
     "Article",
     "ArticleStatus",
+    "ArticleFeature",
+    "ArticleFeatureType",
     "DailyReadingItem",
     "DailyReadingList",
     "DailyReadingStatus",
+    "FeedbackEvent",
+    "FeedbackEventType",
+    "FeedbackReason",
+    "PreferenceFeature",
+    "Publisher",
+    "SavedArticle",
     "Source",
+    "User",
 ]

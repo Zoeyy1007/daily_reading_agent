@@ -336,6 +336,16 @@ candidate article
 
 Do not use Mem0. Keep PostgreSQL as the source of truth.
 
+Deferred source-blocking requirement:
+
+* While discovery is limited to user-managed RSS feeds, users can remove or disable
+  a source directly instead of maintaining an explicit blocked-source preference.
+* Before MCP/web-search expansion is enabled, add user-scoped blocked domains and
+  blocked sources so related-coverage discovery cannot reintroduce sources the user
+  does not want.
+* Keep feedback, saved articles, preferences, and daily lists scoped by user so the
+  same backend can later support authenticated deployment for multiple people.
+
 **Done when:** repeated likes and dislikes visibly change later recommendations.
 
 ### Phase 4
@@ -514,4 +524,3 @@ reading\_everyday/
 ├── docker-compose.yml  
 ├── pyproject.toml  
 └── README.md
-

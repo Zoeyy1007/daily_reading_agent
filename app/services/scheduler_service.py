@@ -1,8 +1,10 @@
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy import select
 
 from app.config import get_settings
+from app.db.models import User
 from app.db.session import SessionLocal
 from app.services.ingestion_service import ingest_all_enabled_sources
 from app.services.reading_list_service import generate_daily_reading_list, local_today
@@ -22,7 +24,16 @@ def _scheduled_ingestion() -> None:
 def _scheduled_daily_list() -> None:
     try:
         with SessionLocal() as session:
-            generate_daily_reading_list(session, local_today(), regenerate=True)
+            user_ids = list(
+                session.scalars(select(User.id).where(User.is_active.is_(True)))
+            )
+            for user_id in user_ids:
+                generate_daily_reading_list(
+                    session,
+                    local_today(),
+                    user_id=user_id,
+                    regenerate=True,
+                )
     except Exception:
         logger.exception("Scheduled daily reading list generation failed")
 

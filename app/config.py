@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Daily Reading"
+    log_level: str = "INFO"
     database_url: str = (
         "postgresql+psycopg://daily_reading:daily_reading@127.0.0.1:5432/daily_reading"
     )
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
     user_agent: str = "DailyReadingAgent/0.1 (personal local project)"
     jina_api_key: str | None = None
     scheduler_enabled: bool = False
+    default_user_id: int = Field(default=1, ge=1)
 
     # Phase 2 filtering and selection settings
     min_article_words: int = Field(default=200, ge=1)
@@ -36,6 +38,7 @@ class Settings(BaseSettings):
     reading_words_per_minute: int = Field(default=225, ge=1)
     daily_list_hour: int = Field(default=7, ge=0, le=23)
     scheduler_timezone: str = "America/Los_Angeles"
+    personalization_weight: float = Field(default=30.0, ge=0, le=100)
 
     @staticmethod
     def _string_set(value: str) -> set[str]:

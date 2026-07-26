@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -9,10 +10,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import Article, ArticleStatus, Source
+from app.db.models import Article, ArticleStatus, Publisher, Source
 from app.services.article_extractor import ArticleExtractor, ExtractionFailedError
 from app.sources.rss import RSSItem, fetch_rss
+from app.utils.timing import timed_stage
 
+logger = logging.getLogger("daily_reading.ingestion")
 
 TRACKING_PARAMETERS = {
     "fbclid",
@@ -65,7 +68,7 @@ def _find_duplicate(session: Session, source_id: int, item: RSSItem, url_hash: s
     return session.scalar(select(Article).where(or_(*conditions)).limit(1))
 
 
-def ingest_source(session: Session, source_id: int) -> IngestionStats:
+def _ingest_source(session: Session, source_id: int) -> IngestionStats:
     settings = get_settings()
     source = session.get(Source, source_id)
     if source is None:
@@ -78,12 +81,13 @@ def ingest_source(session: Session, source_id: int) -> IngestionStats:
         follow_redirects=True,
         headers={"User-Agent": settings.user_agent},
     ) as client:
-        feed = fetch_rss(
-            source.feed_url,
-            client=client,
-            etag=source.etag,
-            last_modified=source.last_modified,
-        )
+        with timed_stage(logger, "ingestion.fetch_rss", source_id=source_id):
+            feed = fetch_rss(
+                source.feed_url,
+                client=client,
+                etag=source.etag,
+                last_modified=source.last_modified,
+            )
         source.last_polled_at = datetime.now(UTC)
         if feed.etag:
             source.etag = feed.etag
@@ -130,7 +134,13 @@ def ingest_source(session: Session, source_id: int) -> IngestionStats:
             article.status = ArticleStatus.EXTRACTING.value
             session.commit()
             try:
-                extracted = extractor.extract(canonical_url)
+                with timed_stage(
+                    logger,
+                    "ingestion.extract_article",
+                    source_id=source_id,
+                    article_id=article.id,
+                ):
+                    extracted = extractor.extract(canonical_url)
                 article.content_text = extracted.content
                 article.author = extracted.author or article.author
                 article.title = extracted.title or article.title
@@ -153,6 +163,15 @@ def ingest_source(session: Session, source_id: int) -> IngestionStats:
     return stats
 
 
+def ingest_source(session: Session, source_id: int) -> IngestionStats:
+    with timed_stage(logger, "ingestion.source_total", source_id=source_id):
+        return _ingest_source(session, source_id)
+
+
 def ingest_all_enabled_sources(session: Session) -> list[IngestionStats]:
-    source_ids = session.scalars(select(Source.id).where(Source.enabled.is_(True))).all()
+    source_ids = session.scalars(
+        select(Source.id)
+        .join(Publisher, Publisher.id == Source.publisher_id)
+        .where(Source.enabled.is_(True), Publisher.enabled.is_(True))
+    ).all()
     return [ingest_source(session, source_id) for source_id in source_ids]

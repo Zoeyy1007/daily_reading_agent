@@ -1,13 +1,26 @@
+import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from time import perf_counter
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from sqlalchemy import text
 
-from app.api import articles, daily_reading, ingestion, sources
+from app.api import articles, daily_reading, feedback, ingestion, publishers, sources
 from app.config import get_settings
 from app.db.session import engine
 from app.services.scheduler_service import start_scheduler, stop_scheduler
+
+application_logger = logging.getLogger("daily_reading")
+application_logger.setLevel(get_settings().log_level.upper())
+if not application_logger.handlers:
+    application_handler = logging.StreamHandler()
+    application_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    )
+    application_logger.addHandler(application_handler)
+application_logger.propagate = False
+http_logger = logging.getLogger("daily_reading.http")
 
 
 @asynccontextmanager
@@ -20,9 +33,30 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title=get_settings().app_name, lifespan=lifespan)
 app.include_router(sources.router)
+app.include_router(publishers.router)
 app.include_router(articles.router)
 app.include_router(ingestion.router)
 app.include_router(daily_reading.router)
+app.include_router(feedback.router)
+
+
+@app.middleware("http")
+async def log_request_timing(request: Request, call_next):
+    started = perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        elapsed_ms = (perf_counter() - started) * 1000
+        http_logger.info(
+            "timing stage=http.request status_code=%s elapsed_ms=%.2f method=%s path=%s",
+            status_code,
+            elapsed_ms,
+            request.method,
+            request.url.path,
+        )
 
 
 @app.get("/health", tags=["health"])

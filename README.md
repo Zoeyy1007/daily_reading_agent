@@ -2,6 +2,8 @@
 
 Phase 1 collects RSS entries, extracts full article text, and stores it in PostgreSQL.
 Phase 2 filters and scores extracted articles and saves a deterministic daily list.
+Phase 3 records user feedback and uses derived preferences to personalize later lists.
+Publishers group multiple category feeds under one website-level source selection.
 
 ## Run locally
 

@@ -20,6 +20,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.db.models.daily_reading import DailyReadingItem
+    from app.db.models.feedback import ArticleFeature, FeedbackEvent, SavedArticle
     from app.db.models.source import Source
 
 
@@ -79,4 +80,11 @@ class Article(Base):
     source: Mapped["Source"] = relationship(back_populates="articles")
     reading_list_items: Mapped[list["DailyReadingItem"]] = relationship(
         back_populates="article"
+    )
+    feedback_events: Mapped[list["FeedbackEvent"]] = relationship(
+        back_populates="article"
+    )
+    saved_by_users: Mapped[list["SavedArticle"]] = relationship(back_populates="article")
+    features: Mapped[list["ArticleFeature"]] = relationship(
+        back_populates="article", cascade="all, delete-orphan"
     )

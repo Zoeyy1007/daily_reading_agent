@@ -16,6 +16,8 @@ class DailyReadingItemRead(BaseModel):
     id: int
     rank: int
     total_score: float
+    base_score: float
+    personalization_score: float
     freshness_score: float
     topic_score: float
     source_score: float
@@ -29,6 +31,7 @@ class DailyReadingListRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    user_id: int
     list_date: date
     target_article_count: int
     target_reading_minutes: int

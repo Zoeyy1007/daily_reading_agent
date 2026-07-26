@@ -21,6 +21,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.db.models.article import Article
+    from app.db.models.user import User
 
 
 class DailyReadingStatus(StrEnum):
@@ -36,10 +37,12 @@ class DailyReadingList(Base):
             "status IN ('building', 'complete', 'failed')",
             name="ck_daily_reading_lists_status",
         ),
+        UniqueConstraint("user_id", "list_date", name="uq_daily_reading_list_user_date"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    list_date: Mapped[date] = mapped_column(Date, unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    list_date: Mapped[date] = mapped_column(Date)
     target_article_count: Mapped[int] = mapped_column(Integer)
     target_reading_minutes: Mapped[int] = mapped_column(Integer)
     actual_article_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -59,6 +62,7 @@ class DailyReadingList(Base):
         cascade="all, delete-orphan",
         order_by="DailyReadingItem.rank",
     )
+    user: Mapped["User"] = relationship(back_populates="daily_reading_lists")
 
 
 class DailyReadingItem(Base):
@@ -81,6 +85,8 @@ class DailyReadingItem(Base):
     )
     rank: Mapped[int] = mapped_column(Integer)
     total_score: Mapped[float] = mapped_column(Float)
+    base_score: Mapped[float] = mapped_column(Float)
+    personalization_score: Mapped[float] = mapped_column(Float, default=0.0)
     freshness_score: Mapped[float] = mapped_column(Float)
     topic_score: Mapped[float] = mapped_column(Float)
     source_score: Mapped[float] = mapped_column(Float)

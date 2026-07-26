@@ -34,62 +34,72 @@ Useful addresses:
 
 Use a second PowerShell terminal for manual API commands.
 
-## Source attributes
+## Publishers and category feeds
 
-The `sources` table contains:
+A publisher represents one website, while a source represents one RSS/Atom feed
+owned by that publisher:
 
-| Attribute | Required when adding | Meaning |
+```text
+The New Yorker
+├── Latest feed
+├── Politics feed
+└── Culture feed
+```
+
+Important publisher attributes:
+
+| Attribute | Required | Meaning |
 | --- | --- | --- |
-| `id` | No | Database-generated numeric identifier. |
-| `name` | Yes | Human-readable source name. |
-| `feed_url` | Yes | Direct RSS or Atom feed URL. It must not be a normal homepage. |
-| `site_url` | No | Website homepage for reference only. |
-| `enabled` | No | Whether scheduled ingestion includes this source. Defaults to `true`. |
-| `poll_interval_minutes` | No | Stored source preference. The current scheduler does not use this field yet. |
-| `etag` | No | Saved automatically for conditional RSS requests. |
-| `last_modified` | No | Saved automatically for conditional RSS requests. |
-| `last_polled_at` | No | Updated automatically after a polling attempt. |
-| `last_success_at` | No | Updated automatically after successful feed processing. |
-| `created_at` | No | Set automatically. |
-| `updated_at` | No | Set automatically. |
+| `name` | Yes | Website or publication name. |
+| `site_url` | No | Publisher homepage. Must be unique when provided. |
+| `enabled` | No | Disabling it prevents scheduled fetching of all its feeds. |
 
-## Add a source through FastAPI
+Important source/feed attributes:
 
-The recommended method is http://127.0.0.1:8000/docs using `POST /sources`.
+| Attribute | Required | Meaning |
+| --- | --- | --- |
+| `publisher_id` | Yes | Parent publisher ID. |
+| `name` | Yes | Human-readable feed name. |
+| `category` | No | Category such as `politics`, `culture`, or `latest`. |
+| `feed_url` | Yes | Direct RSS or Atom URL, not a normal homepage. |
+| `enabled` | No | Whether this individual feed is scheduled. |
+| `poll_interval_minutes` | No | Stored preference; per-feed intervals are not yet scheduled separately. |
 
-Example request:
+ETag, last-modified, polling timestamps, and creation timestamps are managed
+automatically.
+
+## Add a publisher and its feeds through FastAPI
+
+The recommended method is http://127.0.0.1:8000/docs.
+
+First use `POST /publishers`:
 
 ```json
 {
-  "name": "BBC News",
-  "feed_url": "https://feeds.bbci.co.uk/news/rss.xml",
-  "site_url": "https://www.bbc.com/news",
+  "name": "The New Yorker",
+  "site_url": "https://www.newyorker.com/",
+  "enabled": true
+}
+```
+
+The response contains the publisher ID. Then use
+`POST /publishers/{publisher_id}/sources` for each category feed:
+
+```json
+{
+  "name": "The New Yorker Politics",
+  "category": "politics",
+  "feed_url": "https://example.com/replace-with-the-official-feed.xml",
   "enabled": true,
   "poll_interval_minutes": 30
 }
 ```
 
-Only `name` and `feed_url` are required.
+Use `GET /publishers/{publisher_id}` to see the publisher and all its feeds.
 
-PowerShell alternative:
-
-```powershell
-$body = @{
-    name = "BBC News"
-    feed_url = "https://feeds.bbci.co.uk/news/rss.xml"
-    site_url = "https://www.bbc.com/news"
-    enabled = $true
-    poll_interval_minutes = 30
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-    -Method Post `
-    -Uri http://127.0.0.1:8000/sources `
-    -ContentType "application/json" `
-    -Body $body
-```
-
-The response includes the generated source `id`.
+`POST /sources` remains available for compatibility. Supply `publisher_id` to add
+the feed to an existing publisher. When it is omitted, `site_url` is used to find or
+create a publisher automatically.
 
 ## Add a source directly in pgAdmin
 
@@ -98,17 +108,27 @@ Direct SQL works, but it bypasses FastAPI URL validation.
 Open pgAdmin's Query Tool for the `daily_reading` database and run:
 
 ```sql
+INSERT INTO publishers (name, site_url, enabled)
+VALUES ('BBC', 'https://www.bbc.com/news', true)
+RETURNING id;
+```
+
+Use the returned publisher ID:
+
+```sql
 INSERT INTO sources (
+    publisher_id,
     name,
+    category,
     feed_url,
-    site_url,
     enabled,
     poll_interval_minutes
 )
 VALUES (
+    1,
     'BBC News',
+    'latest',
     'https://feeds.bbci.co.uk/news/rss.xml',
-    'https://www.bbc.com/news',
     true,
     30
 )
@@ -121,9 +141,18 @@ but gaps are normal after failed inserts or deletions.
 List sources and their IDs:
 
 ```sql
-SELECT id, name, feed_url, enabled, last_polled_at, last_success_at
-FROM sources
-ORDER BY id;
+SELECT
+    p.id AS publisher_id,
+    p.name AS publisher,
+    s.id AS source_id,
+    s.name AS feed,
+    s.category,
+    s.feed_url,
+    p.enabled AS publisher_enabled,
+    s.enabled AS feed_enabled
+FROM publishers AS p
+JOIN sources AS s ON s.publisher_id = p.id
+ORDER BY p.name, s.name;
 ```
 
 Enable or disable a source:
@@ -166,10 +195,10 @@ RSS_POLL_MINUTES=30
 
 Restart FastAPI after changing `.env`.
 
-Currently, APScheduler runs every `RSS_POLL_MINUTES` and fetches every source whose
-`enabled` value is `true`. The individual `sources.poll_interval_minutes` value is
-not yet consulted. Per-source scheduling should be implemented separately before
-relying on different polling intervals for different feeds.
+Currently, APScheduler runs every `RSS_POLL_MINUTES` and fetches feeds only when both
+their publisher and source `enabled` values are `true`. The individual
+`sources.poll_interval_minutes` value is not yet consulted. Per-source scheduling
+should be implemented separately before relying on different intervals.
 
 Keep only one FastAPI process running with the scheduler enabled. Multiple server
 workers could each start a scheduler and fetch the same feeds concurrently.
@@ -357,6 +386,147 @@ Run the tests with a coverage report:
 ```powershell
 python -m pytest --cov=app --cov-report=term-missing
 ```
+
+## Phase 3 feedback and personalization
+
+Phase 3 currently uses user `1` as the local default. Behavioral tables and daily
+lists are already scoped by `user_id` so authentication can replace this development
+identity later. The optional `X-User-ID` request header selects another existing
+user, but it is not authentication and must not be exposed as security in deployment.
+
+### Manual Phase 3 test
+
+1. Generate a baseline list with `POST /daily-reading/generate`:
+
+   ```json
+   {
+     "list_date": null,
+     "regenerate": true
+   }
+   ```
+
+2. Copy an `article.id` from the response. Record its `base_score`,
+   `personalization_score`, and `total_score`.
+
+3. Submit feedback with `POST /articles/{article_id}/feedback`:
+
+   ```json
+   {
+     "event_type": "like",
+     "reason": "good_writing"
+   }
+   ```
+
+4. Call `GET /preferences/derived`. You should see learned publisher,
+   content-type, category (when present), and topic features. One feedback event has
+   deliberately low confidence; liking or disliking several related articles makes
+   the preference stronger.
+
+5. Generate the list again with `regenerate: true`. Compare
+   `personalization_score` and `total_score` with the baseline. Articles sharing the
+   learned features should move up or down.
+
+6. Confirm the database state with the pgAdmin queries below. You can also call
+   `GET /feedback` to verify the event history.
+
+Submit feedback in FastAPI docs with `POST /articles/{article_id}/feedback`:
+
+```json
+{
+  "event_type": "like",
+  "reason": "good_writing"
+}
+```
+
+Supported event types:
+
+```text
+like, dislike, skip, open, complete, star, unstar
+```
+
+Supported optional reasons:
+
+```text
+too_long, too_repetitive, strong_evidence, good_writing,
+not_interested, too_technical
+```
+
+Useful feedback endpoints:
+
+- `GET /feedback` returns recent feedback history.
+- `GET /saved-articles` returns currently starred articles.
+- `GET /preferences/derived` shows learned publisher, category, content-type, and
+  topic features.
+
+After submitting feedback, rebuild today's list with
+`POST /daily-reading/generate`:
+
+```json
+{
+  "list_date": null,
+  "regenerate": true
+}
+```
+
+The response includes `base_score`, `personalization_score`, and `total_score`.
+Personalization is neutral until feedback produces matching derived features.
+
+Inspect feedback and preferences in pgAdmin:
+
+```sql
+SELECT id, user_id, article_id, event_type, reason, created_at
+FROM feedback_events
+ORDER BY created_at DESC;
+```
+
+```sql
+SELECT
+    user_id,
+    feature_type,
+    feature_value,
+    score,
+    confidence,
+    positive_count,
+    negative_count
+FROM preference_features
+ORDER BY confidence DESC, score DESC;
+```
+
+```sql
+SELECT
+    dri.rank,
+    a.title,
+    dri.base_score,
+    dri.personalization_score,
+    dri.total_score,
+    dri.selection_reason
+FROM daily_reading_lists AS drl
+JOIN daily_reading_items AS dri ON dri.reading_list_id = drl.id
+JOIN articles AS a ON a.id = dri.article_id
+WHERE drl.user_id = 1
+ORDER BY drl.list_date DESC, dri.rank;
+```
+
+Explicit blocked-source preferences are intentionally deferred while discovery uses
+only user-managed RSS feeds. They must be added before MCP or web-search discovery
+can introduce sources outside the configured list.
+
+## Execution-time logs
+
+FastAPI now logs total HTTP request time and pipeline stage timing. Example:
+
+```text
+timing stage=daily.query_candidates status=ok elapsed_ms=9.34 user_id=1
+timing stage=daily.classify_and_filter status=ok elapsed_ms=0.24 article_count=60
+timing stage=daily.article_features status=ok elapsed_ms=16.05 article_count=47
+timing stage=daily.score status=ok elapsed_ms=0.54 article_count=47
+timing stage=daily.total status=ok elapsed_ms=42.39 user_id=1
+timing stage=http.request status_code=200 elapsed_ms=48.10 method=POST path=/daily-reading/generate
+```
+
+RSS ingestion logs `ingestion.fetch_rss`, `ingestion.extract_article`, and
+`ingestion.source_total`. Feedback logs saved-state, article-feature, preference
+rebuild, and total execution time. Failed stages are logged with `status=error`.
 
 ## View fetched articles in pgAdmin
 
