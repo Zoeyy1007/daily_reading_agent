@@ -388,6 +388,15 @@ Round 3: relax soft preferences
 
 **Done when:** a failed run can resume, and the workflow terminates predictably.
 
+Model-provider boundary:
+
+* Classification, embedding, claim extraction, and evidence comparison are separate
+  provider roles and may use different vendors or models.
+* Provider clients and API keys are runtime dependencies; they must never be saved in
+  `DailyRunState` or LangGraph checkpoints.
+* Phase 4 remains deterministic. AI-backed adapters can replace individual node
+  services later without changing graph routing or persistence.
+
 ### Phase 5
 
 Goal: add the strongest, most distinctive feature.

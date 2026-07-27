@@ -581,6 +581,119 @@ prevents the same article URL from being stored twice.
 Before adding a URL, open it in a browser and confirm it displays RSS/XML rather than
 a normal HTML webpage.
 
+## Phase 4 stateful agent runs
+
+Install the Phase 4 dependencies and apply the migration:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+alembic upgrade head
+```
+
+Set these values in `.env` and restart FastAPI:
+
+```dotenv
+AGENT_MAX_EXPANSION_ROUNDS=3
+AGENT_RECURSION_LIMIT=40
+AGENT_RUN_IN_BACKGROUND=true
+LANGGRAPH_STRICT_MSGPACK=true
+```
+
+No AI API key is required for Phase 4. Classification, embedding, claim extraction,
+and evidence comparison have separate provider interfaces and model settings so they
+can use different models later. Provider clients and secrets are never stored in
+checkpoint state.
+
+### Start an agent run
+
+In FastAPI docs, call `POST /agent/runs`:
+
+```json
+{
+  "list_date": null,
+  "regenerate": true,
+  "background": true,
+  "max_expansion_rounds": 3
+}
+```
+
+The API normally returns `202` immediately. Copy the returned `id`, then poll:
+
+```text
+GET /agent/runs/{run_id}
+GET /agent/runs/{run_id}/events
+```
+
+For easier debugging, set `background` to `false`. The request will wait until the
+whole graph finishes, so the Swagger request may take a while when feeds contain many
+new articles.
+
+If a run has status `failed`, fix the underlying problem and call:
+
+```text
+POST /agent/runs/{run_id}/resume?background=true
+```
+
+Resume uses the same `thread_id` and continues from the latest PostgreSQL checkpoint.
+Successful earlier nodes are not started again. A PostgreSQL advisory lock prevents
+two local workers from executing the same run concurrently.
+
+Expansion is bounded:
+
+1. Round 0 uses newly discovered articles from configured feeds.
+2. Round 1 adds extracted candidates already in PostgreSQL.
+3. Round 2 records that related web search is unavailable until a search provider is configured.
+4. Round 3 keeps hard filters and records that no separate soft threshold exists yet.
+
+### Inspect agent runs in pgAdmin
+
+```sql
+SELECT
+    id,
+    thread_id,
+    user_id,
+    list_date,
+    status,
+    current_node,
+    expansion_round,
+    selected_count,
+    reading_list_id,
+    last_error,
+    started_at,
+    completed_at
+FROM daily_runs
+ORDER BY created_at DESC;
+```
+
+View timings and errors for one run:
+
+```sql
+SELECT
+    node_name,
+    attempt,
+    status,
+    elapsed_ms,
+    message,
+    started_at,
+    completed_at
+FROM run_events
+WHERE run_id = 1
+ORDER BY id;
+```
+
+LangGraph creates its own checkpoint tables when the first run calls
+`PostgresSaver.setup()`. Treat those as internal workflow tables. Use `daily_runs`
+and `run_events` for normal inspection.
+
+Run only Phase 4 tests:
+
+```powershell
+python -m pytest tests/test_phase_four.py -q
+```
+
+These tests cover termination routing, reading-budget selection, and resuming after a
+simulated mid-graph failure without repeating successful nodes.
+
 ## Stop development services
 
 Stop FastAPI with `Ctrl+C` in its terminal.

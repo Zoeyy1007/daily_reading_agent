@@ -6,7 +6,15 @@ from time import perf_counter
 from fastapi import FastAPI, Request
 from sqlalchemy import text
 
-from app.api import articles, daily_reading, feedback, ingestion, publishers, sources
+from app.api import (
+    agent_runs,
+    articles,
+    daily_reading,
+    feedback,
+    ingestion,
+    publishers,
+    sources,
+)
 from app.config import get_settings
 from app.db.session import engine
 from app.services.scheduler_service import start_scheduler, stop_scheduler
@@ -38,6 +46,7 @@ app.include_router(articles.router)
 app.include_router(ingestion.router)
 app.include_router(daily_reading.router)
 app.include_router(feedback.router)
+app.include_router(agent_runs.router)
 
 
 @app.middleware("http")

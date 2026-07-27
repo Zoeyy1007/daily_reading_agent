@@ -7,7 +7,9 @@ from app.config import get_settings
 from app.db.models import User
 from app.db.session import SessionLocal
 from app.services.ingestion_service import ingest_all_enabled_sources
-from app.services.reading_list_service import generate_daily_reading_list, local_today
+from app.agent.runner import execute_agent_run
+from app.services.reading_list_service import local_today
+from app.services.run_service import create_agent_run
 
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler(timezone=get_settings().scheduler_timezone)
@@ -23,17 +25,21 @@ def _scheduled_ingestion() -> None:
 
 def _scheduled_daily_list() -> None:
     try:
+        run_ids: list[int] = []
         with SessionLocal() as session:
             user_ids = list(
                 session.scalars(select(User.id).where(User.is_active.is_(True)))
             )
             for user_id in user_ids:
-                generate_daily_reading_list(
+                run = create_agent_run(
                     session,
-                    local_today(),
                     user_id=user_id,
-                    regenerate=True,
+                    list_date=local_today(),
+                    max_expansion_rounds=get_settings().agent_max_expansion_rounds,
                 )
+                run_ids.append(run.id)
+        for run_id in run_ids:
+            execute_agent_run(run_id, regenerate=True)
     except Exception:
         logger.exception("Scheduled daily reading list generation failed")
 

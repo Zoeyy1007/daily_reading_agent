@@ -4,6 +4,8 @@ Phase 1 collects RSS entries, extracts full article text, and stores it in Postg
 Phase 2 filters and scores extracted articles and saves a deterministic daily list.
 Phase 3 records user feedback and uses derived preferences to personalize later lists.
 Publishers group multiple category feeds under one website-level source selection.
+Phase 4 runs those stages as a checkpointed LangGraph workflow with bounded expansion,
+per-node timing, failure history, and resume support.
 
 ## Run locally
 

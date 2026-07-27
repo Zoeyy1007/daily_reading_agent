@@ -1,4 +1,10 @@
 from app.db.models.article import Article, ArticleStatus
+from app.db.models.agent_run import (
+    AgentRunStatus,
+    DailyRun,
+    RunEvent,
+    RunEventStatus,
+)
 from app.db.models.daily_reading import (
     DailyReadingItem,
     DailyReadingList,
@@ -20,6 +26,8 @@ from app.db.models.user import User
 __all__ = [
     "Article",
     "ArticleStatus",
+    "AgentRunStatus",
+    "DailyRun",
     "ArticleFeature",
     "ArticleFeatureType",
     "DailyReadingItem",
@@ -30,6 +38,8 @@ __all__ = [
     "FeedbackReason",
     "PreferenceFeature",
     "Publisher",
+    "RunEvent",
+    "RunEventStatus",
     "SavedArticle",
     "Source",
     "User",

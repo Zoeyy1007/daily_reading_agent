@@ -19,3 +19,7 @@ py3langid>=0.3,<1
 # Scheduling and retries
 APScheduler>=3.11,<4
 tenacity>=9,<10
+
+# Stateful agent workflow and PostgreSQL checkpoints
+langgraph>=1.2,<1.3
+langgraph-checkpoint-postgres>=3.1,<4

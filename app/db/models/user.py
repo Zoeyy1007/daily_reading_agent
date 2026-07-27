@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.db.models.agent_run import DailyRun
     from app.db.models.daily_reading import DailyReadingList
     from app.db.models.feedback import FeedbackEvent, PreferenceFeature, SavedArticle
 
@@ -33,3 +34,4 @@ class User(Base):
     preference_features: Mapped[list["PreferenceFeature"]] = relationship(
         back_populates="user"
     )
+    daily_runs: Mapped[list["DailyRun"]] = relationship(back_populates="user")

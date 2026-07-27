@@ -1,6 +1,6 @@
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -38,6 +38,7 @@ class IngestionStats:
     failed: int = 0
     duplicates: int = 0
     not_modified: bool = False
+    article_ids: list[int] = field(default_factory=list)
 
 
 def canonicalize_url(url: str) -> str:
@@ -68,7 +69,7 @@ def _find_duplicate(session: Session, source_id: int, item: RSSItem, url_hash: s
     return session.scalar(select(Article).where(or_(*conditions)).limit(1))
 
 
-def _ingest_source(session: Session, source_id: int) -> IngestionStats:
+def discover_source(session: Session, source_id: int) -> IngestionStats:
     settings = get_settings()
     source = session.get(Source, source_id)
     if source is None:
@@ -98,11 +99,6 @@ def _ingest_source(session: Session, source_id: int) -> IngestionStats:
             session.commit()
             return stats
 
-        extractor = ArticleExtractor(
-            client,
-            minimum_words=settings.article_min_words,
-            jina_api_key=settings.jina_api_key,
-        )
         for item in feed.items:
             canonical_url = canonicalize_url(item.url)
             url_hash = _url_hash(canonical_url)
@@ -130,17 +126,57 @@ def _ingest_source(session: Session, source_id: int) -> IngestionStats:
                 stats.duplicates += 1
                 continue
             stats.discovered += 1
+            stats.article_ids.append(article.id)
 
+        source.last_success_at = datetime.now(UTC)
+        session.commit()
+    return stats
+
+
+def extract_articles(session: Session, article_ids: list[int]) -> tuple[int, int]:
+    """Extract discovered articles and return ``(extracted, failed)`` counts."""
+    if not article_ids:
+        return 0, 0
+    settings = get_settings()
+    extracted_count = 0
+    failed_count = 0
+    timeout = httpx.Timeout(settings.http_timeout_seconds)
+    with httpx.Client(
+        timeout=timeout,
+        follow_redirects=True,
+        headers={"User-Agent": settings.user_agent},
+    ) as client:
+        extractor = ArticleExtractor(
+            client,
+            minimum_words=settings.article_min_words,
+            jina_api_key=settings.jina_api_key,
+        )
+        articles = list(
+            session.scalars(
+                select(Article)
+                .where(
+                    Article.id.in_(article_ids),
+                    Article.status.in_(
+                        [
+                            ArticleStatus.DISCOVERED.value,
+                            ArticleStatus.EXTRACTING.value,
+                        ]
+                    ),
+                )
+                .order_by(Article.id)
+            )
+        )
+        for article in articles:
             article.status = ArticleStatus.EXTRACTING.value
             session.commit()
             try:
                 with timed_stage(
                     logger,
                     "ingestion.extract_article",
-                    source_id=source_id,
+                    source_id=article.source_id,
                     article_id=article.id,
                 ):
-                    extracted = extractor.extract(canonical_url)
+                    extracted = extractor.extract(article.canonical_url)
                 article.content_text = extracted.content
                 article.author = extracted.author or article.author
                 article.title = extracted.title or article.title
@@ -150,28 +186,82 @@ def _ingest_source(session: Session, source_id: int) -> IngestionStats:
                 article.fetched_at = extracted.fetched_at
                 article.status = ArticleStatus.EXTRACTED.value
                 article.extraction_error = None
-                stats.extracted += 1
+                extracted_count += 1
             except ExtractionFailedError as exc:
                 article.status = ArticleStatus.FAILED.value
                 article.fetched_at = datetime.now(UTC)
                 article.extraction_error = str(exc)[:4000]
-                stats.failed += 1
+                failed_count += 1
             session.commit()
+    return extracted_count, failed_count
 
-        source.last_success_at = datetime.now(UTC)
-        session.commit()
-    return stats
+
+def deduplicate_article_content(
+    session: Session, article_ids: list[int]
+) -> tuple[list[int], int]:
+    """Mark same-content articles as duplicates, retaining the oldest row."""
+    kept: list[int] = []
+    duplicate_count = 0
+    articles = list(
+        session.scalars(
+            select(Article)
+            .where(
+                Article.id.in_(article_ids),
+                Article.status == ArticleStatus.EXTRACTED.value,
+                Article.content_hash.is_not(None),
+            )
+            .order_by(Article.id)
+        )
+    )
+    for article in articles:
+        original_id = session.scalar(
+            select(Article.id)
+            .where(
+                Article.content_hash == article.content_hash,
+                Article.status == ArticleStatus.EXTRACTED.value,
+                Article.id < article.id,
+            )
+            .order_by(Article.id)
+            .limit(1)
+        )
+        if original_id is None:
+            kept.append(article.id)
+            continue
+        article.status = ArticleStatus.DUPLICATE.value
+        article.duplicate_of_article_id = original_id
+        duplicate_count += 1
+    session.commit()
+    return kept, duplicate_count
 
 
 def ingest_source(session: Session, source_id: int) -> IngestionStats:
     with timed_stage(logger, "ingestion.source_total", source_id=source_id):
-        return _ingest_source(session, source_id)
+        stats = discover_source(session, source_id)
+        stats.extracted, stats.failed = extract_articles(session, stats.article_ids)
+        _kept, content_duplicates = deduplicate_article_content(
+            session, stats.article_ids
+        )
+        stats.duplicates += content_duplicates
+        return stats
 
 
-def ingest_all_enabled_sources(session: Session) -> list[IngestionStats]:
+def discover_all_enabled_sources(session: Session) -> list[IngestionStats]:
     source_ids = session.scalars(
         select(Source.id)
         .join(Publisher, Publisher.id == Source.publisher_id)
         .where(Source.enabled.is_(True), Publisher.enabled.is_(True))
     ).all()
-    return [ingest_source(session, source_id) for source_id in source_ids]
+    return [discover_source(session, source_id) for source_id in source_ids]
+
+
+def ingest_all_enabled_sources(session: Session) -> list[IngestionStats]:
+    stats = discover_all_enabled_sources(session)
+    for source_stats in stats:
+        source_stats.extracted, source_stats.failed = extract_articles(
+            session, source_stats.article_ids
+        )
+        _kept, content_duplicates = deduplicate_article_content(
+            session, source_stats.article_ids
+        )
+        source_stats.duplicates += content_duplicates
+    return stats

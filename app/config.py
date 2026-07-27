@@ -40,6 +40,18 @@ class Settings(BaseSettings):
     scheduler_timezone: str = "America/Los_Angeles"
     personalization_weight: float = Field(default=30.0, ge=0, le=100)
 
+    # Phase 4 agent workflow settings
+    agent_max_expansion_rounds: int = Field(default=3, ge=0, le=10)
+    agent_recursion_limit: int = Field(default=40, ge=10, le=200)
+    agent_run_in_background: bool = True
+
+    # Model roles are intentionally independent. Provider clients are added when
+    # an AI-powered node is introduced; the Phase 4 graph itself needs no API key.
+    classification_model: str | None = None
+    embedding_model: str | None = None
+    claim_extraction_model: str | None = None
+    evidence_comparison_model: str | None = None
+
     @staticmethod
     def _string_set(value: str) -> set[str]:
         return {item.strip().casefold() for item in value.split(",") if item.strip()}
@@ -67,6 +79,11 @@ class Settings(BaseSettings):
     @property
     def blocked_source_id_set(self) -> set[int]:
         return self._integer_set(self.blocked_source_ids)
+
+    @property
+    def resolved_database_url(self) -> str:
+        """Prefer Docker's IPv4 host binding when a local URL says localhost."""
+        return self.database_url.replace("@localhost:", "@127.0.0.1:")
 
 
 @lru_cache

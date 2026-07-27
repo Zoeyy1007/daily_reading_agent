@@ -70,6 +70,9 @@ class Article(Base):
     )
     extractor_used: Mapped[str | None] = mapped_column(String(40))
     extraction_error: Mapped[str | None] = mapped_column(Text)
+    duplicate_of_article_id: Mapped[int | None] = mapped_column(
+        ForeignKey("articles.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
