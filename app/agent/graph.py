@@ -14,11 +14,19 @@ from app.config import Settings, get_settings
 from app.db.models import RunEventStatus
 from app.db.session import SessionLocal
 from app.nodes.classify import classify_node
+from app.nodes.ai_classify import ai_classify_node
+from app.nodes.apply_evidence import apply_evidence_node
+from app.nodes.chunk_articles import chunk_articles_node
 from app.nodes.collect import collect_node
 from app.nodes.content_deduplicate import content_deduplicate_node
+from app.nodes.compare_evidence import compare_evidence_node
+from app.nodes.cluster_stories import cluster_stories_node
+from app.nodes.embed_articles import embed_articles_node
+from app.nodes.embed_chunks import embed_chunks_node
 from app.nodes.exact_deduplicate import exact_deduplicate_node
 from app.nodes.expand_sources import expand_sources_node
 from app.nodes.extract import extract_node
+from app.nodes.extract_claims import extract_claims_node
 from app.nodes.filter import filter_node
 from app.nodes.finalize import finalize_node
 from app.nodes.load_settings import load_settings_node
@@ -43,6 +51,14 @@ DEFAULT_HANDLERS: dict[str, NodeHandler] = {
     "content_deduplicate": content_deduplicate_node,
     "classify": classify_node,
     "filter": filter_node,
+    "ai_classify": ai_classify_node,
+    "embed_articles": embed_articles_node,
+    "cluster_stories": cluster_stories_node,
+    "chunk_articles": chunk_articles_node,
+    "embed_chunks": embed_chunks_node,
+    "extract_claims": extract_claims_node,
+    "compare_evidence": compare_evidence_node,
+    "apply_evidence": apply_evidence_node,
     "personalize": personalize_node,
     "select": select_node,
     "expand_sources": expand_sources_node,
@@ -141,7 +157,15 @@ def build_daily_run_graph(
                 return selected_handler(state, None, settings_provider())  # type: ignore[arg-type]
 
             node.__name__ = name
-        if name in {"collect", "extract"}:
+        if name in {
+            "collect",
+            "extract",
+            "ai_classify",
+            "embed_articles",
+            "embed_chunks",
+            "extract_claims",
+            "compare_evidence",
+        }:
             builder.add_node(name, node, retry_policy=retry_policy)
         else:
             builder.add_node(name, node)
@@ -153,7 +177,15 @@ def build_daily_run_graph(
     builder.add_edge("extract", "content_deduplicate")
     builder.add_edge("content_deduplicate", "classify")
     builder.add_edge("classify", "filter")
-    builder.add_edge("filter", "personalize")
+    builder.add_edge("filter", "ai_classify")
+    builder.add_edge("ai_classify", "embed_articles")
+    builder.add_edge("embed_articles", "cluster_stories")
+    builder.add_edge("cluster_stories", "chunk_articles")
+    builder.add_edge("chunk_articles", "embed_chunks")
+    builder.add_edge("embed_chunks", "extract_claims")
+    builder.add_edge("extract_claims", "compare_evidence")
+    builder.add_edge("compare_evidence", "apply_evidence")
+    builder.add_edge("apply_evidence", "personalize")
     builder.add_edge("personalize", "select")
     builder.add_conditional_edges(
         "select",

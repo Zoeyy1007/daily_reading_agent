@@ -38,6 +38,7 @@ class IngestionStats:
     failed: int = 0
     duplicates: int = 0
     not_modified: bool = False
+    error: str | None = None
     article_ids: list[int] = field(default_factory=list)
 
 
@@ -251,12 +252,26 @@ def discover_all_enabled_sources(session: Session) -> list[IngestionStats]:
         .join(Publisher, Publisher.id == Source.publisher_id)
         .where(Source.enabled.is_(True), Publisher.enabled.is_(True))
     ).all()
-    return [discover_source(session, source_id) for source_id in source_ids]
+    results: list[IngestionStats] = []
+    for source_id in source_ids:
+        try:
+            results.append(discover_source(session, source_id))
+        except Exception as exc:
+            session.rollback()
+            logger.exception(
+                "RSS source discovery failed; skipping source_id=%s", source_id
+            )
+            results.append(
+                IngestionStats(source_id=source_id, error=str(exc)[:4000])
+            )
+    return results
 
 
 def ingest_all_enabled_sources(session: Session) -> list[IngestionStats]:
     stats = discover_all_enabled_sources(session)
     for source_stats in stats:
+        if source_stats.error is not None:
+            continue
         source_stats.extracted, source_stats.failed = extract_articles(
             session, source_stats.article_ids
         )

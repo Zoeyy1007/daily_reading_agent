@@ -18,5 +18,6 @@ def collect_node(
             "discovered": sum(result.discovered for result in results),
             "exact_duplicates": sum(result.duplicates for result in results),
             "not_modified_sources": sum(result.not_modified for result in results),
+            "source_failures": sum(result.error is not None for result in results),
         },
     }

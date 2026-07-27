@@ -12,6 +12,23 @@ config.set_main_option("sqlalchemy.url", get_settings().resolved_database_url)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 target_metadata = Base.metadata
+LANGGRAPH_TABLES = {
+    "checkpoint_blobs",
+    "checkpoint_migrations",
+    "checkpoint_writes",
+    "checkpoints",
+}
+
+
+def include_object(object_, name: str | None, type_: str, reflected: bool, compare_to) -> bool:
+    """LangGraph owns its checkpoint schema outside Alembic migrations."""
+    if reflected and compare_to is None:
+        table_name = name if type_ == "table" else getattr(object_, "table", None)
+        if not isinstance(table_name, str):
+            table_name = getattr(table_name, "name", None)
+        if table_name in LANGGRAPH_TABLES:
+            return False
+    return True
 
 
 def run_migrations_offline() -> None:
@@ -20,6 +37,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -32,7 +50,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
+        )
         with context.begin_transaction():
             context.run_migrations()
 

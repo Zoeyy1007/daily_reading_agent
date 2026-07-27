@@ -27,6 +27,8 @@ class DailyRunState(TypedDict, total=False):
     candidate_article_ids: list[int]
     eligible_article_ids: list[int]
     selected_article_ids: list[int]
+    story_cluster_ids: list[int]
+    evidence_cluster_ids: list[int]
     candidate_scores: list[CandidateScore]
     selected_scores: list[CandidateScore]
     stats: dict[str, int | str | bool]

@@ -81,3 +81,4 @@ class IngestionResult(BaseModel):
     failed: int = 0
     duplicates: int = 0
     not_modified: bool = False
+    error: str | None = None

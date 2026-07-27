@@ -6,6 +6,9 @@ Phase 3 records user feedback and uses derived preferences to personalize later 
 Publishers group multiple category feeds under one website-level source selection.
 Phase 4 runs those stages as a checkpointed LangGraph workflow with bounded expansion,
 per-node timing, failure history, and resume support.
+Phase 5 adds provider-separated AI classification, Qwen embeddings, pgvector story
+clustering, DeepSeek claim extraction and evidence comparison, and deterministic
+representative-article selection.
 
 ## Run locally
 

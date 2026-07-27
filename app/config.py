@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,12 +45,55 @@ class Settings(BaseSettings):
     agent_recursion_limit: int = Field(default=40, ge=10, le=200)
     agent_run_in_background: bool = True
 
-    # Model roles are intentionally independent. Provider clients are added when
-    # an AI-powered node is introduced; the Phase 4 graph itself needs no API key.
-    classification_model: str | None = None
-    embedding_model: str | None = None
-    claim_extraction_model: str | None = None
-    evidence_comparison_model: str | None = None
+    # Phase 5 provider roles. Each role is deliberately independent.
+    phase_five_enabled: bool = True
+    phase_five_max_articles: int = Field(default=30, ge=1, le=100)
+
+    embedding_provider: str = "qwen"
+    embedding_model: str = "text-embedding-v4"
+    embedding_dimensions: int = Field(default=1024, ge=64, le=2000)
+    embedding_batch_size: int = Field(default=10, ge=1, le=10)
+    dashscope_api_key: SecretStr | None = None
+    qwen_base_url: str = ""
+
+    classification_provider: str = "deepseek"
+    classification_model: str = "deepseek-v4-flash"
+    classification_thinking: bool = False
+    classification_max_output_tokens: int = Field(default=1500, ge=100)
+
+    claim_extraction_provider: str = "deepseek"
+    claim_extraction_model: str = "deepseek-v4-pro"
+    claim_extraction_thinking: bool = False
+    claim_extraction_max_output_tokens: int = Field(default=8000, ge=500)
+    deepseek_api_key: SecretStr | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+
+    evidence_comparison_provider: str = "deepseek"
+    evidence_comparison_model: str = "deepseek-v4-pro"
+    evidence_comparison_thinking: bool = False
+    evidence_comparison_max_output_tokens: int = Field(default=4000, ge=500)
+    moonshot_api_key: SecretStr | None = None
+    kimi_base_url: str = "https://api.moonshot.cn/v1"
+
+    article_chunk_word_threshold: int = Field(default=1500, ge=500)
+    article_chunk_target_words: int = Field(default=800, ge=200)
+    article_chunk_overlap_words: int = Field(default=100, ge=0)
+    evidence_retrieval_chunk_limit: int = Field(default=20, ge=5, le=50)
+    evidence_bm25_weight: float = Field(default=0.4, ge=0, le=1)
+    evidence_vector_weight: float = Field(default=0.6, ge=0, le=1)
+    evidence_max_claim_pairs: int = Field(default=20, ge=1, le=100)
+    evidence_pair_batch_size: int = Field(default=5, ge=1, le=20)
+    story_cluster_similarity_threshold: float = Field(default=0.82, ge=0, le=1)
+    story_cluster_redundancy_threshold: float = Field(default=0.94, ge=0, le=1)
+    story_cluster_max_articles: int = Field(default=5, ge=2, le=20)
+    story_cluster_lookback_days: int = Field(default=7, ge=1, le=30)
+    prompt_version: str = "phase5-v2"
+
+    unselected_chunk_retention_days: int = Field(default=7, ge=1, le=30)
+    unselected_evidence_retention_days: int = Field(default=7, ge=1, le=30)
+    selected_evidence_retention_days: int = Field(default=30, ge=1, le=30)
+    cluster_metadata_retention_days: int = Field(default=30, ge=1, le=90)
+    model_call_log_retention_days: int = Field(default=30, ge=1, le=90)
 
     @staticmethod
     def _string_set(value: str) -> set[str]:

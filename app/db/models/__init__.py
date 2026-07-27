@@ -19,6 +19,16 @@ from app.db.models.feedback import (
     PreferenceFeature,
     SavedArticle,
 )
+from app.db.models.evidence import (
+    ArticleAIClassification,
+    ArticleChunk,
+    ArticleClaim,
+    ClaimLink,
+    ClusterComparison,
+    ModelCall,
+    StoryCluster,
+    StoryClusterMember,
+)
 from app.db.models.publisher import Publisher
 from app.db.models.source import Source
 from app.db.models.user import User
@@ -30,6 +40,11 @@ __all__ = [
     "DailyRun",
     "ArticleFeature",
     "ArticleFeatureType",
+    "ArticleAIClassification",
+    "ArticleChunk",
+    "ArticleClaim",
+    "ClaimLink",
+    "ClusterComparison",
     "DailyReadingItem",
     "DailyReadingList",
     "DailyReadingStatus",
@@ -38,9 +53,12 @@ __all__ = [
     "FeedbackReason",
     "PreferenceFeature",
     "Publisher",
+    "ModelCall",
     "RunEvent",
     "RunEventStatus",
     "SavedArticle",
     "Source",
+    "StoryCluster",
+    "StoryClusterMember",
     "User",
 ]

@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
@@ -42,6 +43,12 @@ class Article(Base):
         ),
         Index("ix_articles_source_published", "source_id", "published_at"),
         Index("ix_articles_status", "status"),
+        Index(
+            "ix_articles_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -70,6 +77,9 @@ class Article(Base):
     )
     extractor_used: Mapped[str | None] = mapped_column(String(40))
     extraction_error: Mapped[str | None] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024))
+    embedding_model: Mapped[str | None] = mapped_column(String(120))
+    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duplicate_of_article_id: Mapped[int | None] = mapped_column(
         ForeignKey("articles.id", ondelete="SET NULL")
     )

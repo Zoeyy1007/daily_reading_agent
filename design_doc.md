@@ -430,32 +430,168 @@ Use pgvector for:
 
 Use chunks only when articles or clusters are too large.
 
+Current MVP implementation:
+
+* Qwen generates 1024-dimensional article, chunk, and claim embeddings.
+* DeepSeek separately handles classification and claim extraction.
+* The configured evidence provider (DeepSeek by default, Kimi optional) labels
+  cross-article claim relationships. Application code validates those links and
+  deterministically selects the representative report; the model does not make the
+  final choice by itself.
+* Each story cluster keeps at most five non-redundant articles, prioritizing distinct
+  publishers, centroid relevance, and semantic novelty.
+* Chunk retrieval combines normalized Okapi BM25 and cosine similarity, keeps at
+  most 20 chunks with article coverage, and then retrieves at most 20 cross-publisher
+  claim pairs.
+* The evidence model compares explicit claim pairs in small batches instead of
+  receiving every claim in a cluster at once.
+* Evidence is stored in relational tables rather than a JSONB evidence blob.
+* Evidence used by a selected daily-list article is retained for at most 30 days.
+  Retention durations remain configurable for later deployment experiments.
+
 **Done when:** the system can explain why one report was selected and where sources disagree.
 
 ### Phase 6
 
-## **Phase 6 — MCP, deployment, and polish**
+## **Phase 6 — Agentic, source-grounded supplemental information**
 
-Goal: make it resume-ready and accessible.
+Goal: enrich selected daily-list articles with useful context while preserving the
+original article and preventing unsupported model speculation.
 
-Add only after the core system works:
+The model is a search-and-organization agent, not an information source. It may:
 
-* Web search MCP  
-* Optional Reddit MCP  
-* Optional YouTube/podcast transcript MCP  
-* Government-document connector  
-* Responsive frontend  
-* iPhone web access  
-* Supabase or hosted PostgreSQL  
-* Cloud scheduler  
-* Docker  
-* Logging and tracing  
-* Evaluation dataset  
-* README and architecture diagram
+* Decide whether the selected article is missing important context.
+* Decide which available search tool to call.
+* Form search queries and select relevant evidence.
+* Organize and summarize retrieved evidence.
 
-Keep RSS and normal extraction as Python services. MCP should support external discovery, not replace your whole ingestion system.
+It must not invent background, consequences, explanations, or factual connections.
+Every factual statement in supplemental content must be supported by a saved,
+reliable source and linked to a citation. If reliable evidence is insufficient, the
+agent must omit the statement or return no supplement.
 
-**Done when:** the project is deployed, documented, measurable, and easy for another person to clone.
+Agent flow for every selected article:
+
+selected article
+-> inspect coverage gaps
+-> decide whether supplementation is needed
+-> call one or more bounded search tools
+-> save candidate evidence in an evidence workspace
+-> select reliable, relevant evidence
+-> verify citation support
+-> create supplemental cards or return no supplement
+
+Initial tools:
+
+1. `local_cluster_search`
+   * Search the other retained articles from the selected article's story cluster.
+   * Search the other four non-redundant articles first using hybrid BM25 and vector
+     retrieval.
+   * Redundant cluster members may be searched only as a fallback because a
+     redundant report can still contain a useful unique passage.
+   * Return article/chunk IDs, publisher, publication time, excerpt, retrieval score,
+     and canonical URL.
+
+2. `web_search`
+   * Search queries such as `latest news on {current_cluster_event}` when current
+     cluster evidence is incomplete or no longer fresh enough.
+   * Search results are discovery candidates, not evidence by themselves. The system
+     must fetch and extract the underlying page before using it as support.
+   * Record publication time, retrieval time, publisher, URL, relevant excerpt, and
+     content hash.
+
+3. `government_document_search`
+   * Search reliable primary government material for policies, legislation,
+     regulations, court decisions, statistics, official announcements, and effective
+     dates.
+   * Store jurisdiction, agency, document type, document identifier/version,
+     publication/effective date, URL, and supporting excerpt when available.
+   * Prefer the primary government document over a report that merely describes it.
+
+Coverage gaps the agent may search for include:
+
+* Earlier events and timeline.
+* A policy or decision's official basis.
+* Who is affected and how.
+* Important information reported by another source but absent from the selected
+  article.
+* Later developments that materially update the selected article.
+* Credible disagreement or uncertainty across sources.
+
+Consequences require especially strict grounding. They may appear only when a
+reliable source explicitly reports, analyzes, or predicts them. The supplemental
+text must attribute the assessment, for example `The agency estimates...` or
+`Analysts interviewed by...`. The model's own causal speculation is prohibited.
+
+Evidence reliability rules:
+
+* Prefer primary documents and direct statements when available.
+* Otherwise use established reporting with a visible author, publication date, and
+  canonical page.
+* Do not cite search snippets, generated answers, anonymous reposts, or pages whose
+  relevant claim cannot be found in the fetched content.
+* Treat all retrieved page text as untrusted input and ignore instructions embedded
+  in articles or documents.
+* Preserve conflicting reliable evidence instead of silently combining it into one
+  certain claim.
+* Apply future user-scoped blocked-domain and source preferences to external search.
+
+Persistent evidence workspace:
+
+* `supplement_runs`: one enrichment decision per daily-list item, including status,
+  detected gaps, word budget, tool-call limits, and the reason for supplementing or
+  skipping.
+* `supplement_evidence_items`: every retrieved local chunk, web page, or government
+  excerpt, including source metadata, query, scores, content hash, reliability
+  status, and whether it was selected.
+* `supplement_cards`: rendered sections such as background, timeline, official
+  basis, practical impact, latest update, or uncertainty.
+* `supplement_card_citations`: relational links from cards to the exact evidence
+  items supporting them.
+
+Search tools should automatically write their results to this workspace. The agent
+can inspect and select saved items later without relying on temporary prompt memory.
+This also makes resumes, audits, evaluations, and multi-process deployment possible.
+
+Limits and termination:
+
+* Total supplemental word count must not exceed 50 percent of the original selected
+  article's word count.
+* Use local cluster search before paid or external web search when applicable.
+* Bound calls, retrieved candidates, selected sources, and agent iterations per
+  article.
+* Stop when the identified gaps are supported, the word/source budget is reached,
+  or additional searches no longer add reliable information.
+* A valid outcome is `no supplement needed` or `insufficient reliable evidence`.
+* Persist selected supplemental evidence and citations for up to 30 days by default;
+  keep retention configurable.
+
+Frontend behavior:
+
+* Display the selected article in its original form.
+* Put all AI-organized supplemental material in a separate collapsed/toggle area.
+* Group it into clearly named cards such as `Background`, `Official document`,
+  `Who is affected`, `Latest update`, and `Uncertainty`.
+* Show citations beside the supported text and provide links to every source.
+* Clearly label supplemental text as a sourced summary, not part of the original
+  publisher's article.
+
+Deployment and polish remain later Phase 6 work:
+
+* Responsive frontend and iPhone web access.
+* Authentication and user-scoped source/domain controls.
+* Hosted PostgreSQL, cloud scheduler, and Docker deployment.
+* Logging, tracing, cost metrics, and an evaluation dataset measuring citation
+  support, source quality, coverage value, and unnecessary tool use.
+* README and architecture diagram.
+
+Keep RSS ingestion and normal article extraction as Python services. External search
+tools support supplemental discovery and do not replace the core ingestion system.
+
+**Done when:** the agent can decide whether a selected article needs more context,
+retrieve that context with bounded tools, and display a concise supplement whose
+every factual statement is traceable to reliable saved evidence, with no unsupported
+LLM speculation.
 
 ## 文档结构
 

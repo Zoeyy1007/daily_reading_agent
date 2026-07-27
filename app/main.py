@@ -10,6 +10,7 @@ from app.api import (
     agent_runs,
     articles,
     daily_reading,
+    evidence,
     feedback,
     ingestion,
     publishers,
@@ -47,6 +48,7 @@ app.include_router(ingestion.router)
 app.include_router(daily_reading.router)
 app.include_router(feedback.router)
 app.include_router(agent_runs.router)
+app.include_router(evidence.router)
 
 
 @app.middleware("http")

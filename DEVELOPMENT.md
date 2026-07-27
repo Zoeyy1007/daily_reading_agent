@@ -162,6 +162,21 @@ UPDATE sources SET enabled = false WHERE id = 1;
 UPDATE sources SET enabled = true WHERE id = 1;
 ```
 
+Prefer disabling a broken feed first because deleting a source also deletes its
+articles through the database cascade. In FastAPI docs, call
+`PATCH /sources/{source_id}` with:
+
+```json
+{
+  "enabled": false
+}
+```
+
+To permanently remove it, call `DELETE /sources/{source_id}`. Bulk ingestion and
+agent collection isolate feed-level errors: a failed feed is logged, returned with
+an `error` value, counted in `source_failures`, and skipped while other feeds
+continue.
+
 ## Fetch articles manually
 
 Use the source ID returned when the source was created:
@@ -693,6 +708,323 @@ python -m pytest tests/test_phase_four.py -q
 
 These tests cover termination routing, reading-budget selection, and resuming after a
 simulated mid-graph failure without repeating successful nodes.
+
+## Phase 5 story and evidence pipeline
+
+Phase 5 runs inside the agent graph after deterministic filtering:
+
+```text
+AI classification -> article embeddings -> story clustering -> redundancy pruning
+-> chunks -> hybrid retrieval -> claim extraction -> bounded pair comparison
+-> representative selection
+```
+
+Each model role is configured independently. Copy the Phase 5 block from
+`.env.example` into `.env`, add your real keys there, and keep `.env` out of Git.
+The current MVP uses Qwen for 1024-dimensional embeddings and DeepSeek for
+classification, claim extraction, and evidence comparison. Kimi remains an optional
+evidence provider selected with `EVIDENCE_COMPARISON_PROVIDER=kimi`.
+
+Install dependencies and create the pgvector tables:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+alembic upgrade head
+```
+
+PostgreSQL's `vector` extension is enabled by the migration. Do not change
+`EMBEDDING_DIMENSIONS` without a new migration because the database columns are
+currently `vector(1024)`.
+
+### Run Phase 5
+
+Start FastAPI, then use `POST /agent/runs` in the API docs:
+
+```json
+{
+  "list_date": null,
+  "regenerate": true,
+  "background": false,
+  "max_expansion_rounds": 3
+}
+```
+
+Synchronous mode is easiest to debug, but it can take several minutes because the
+models are called sequentially. For normal use, set
+`background` to `true`, copy the returned run ID, and poll:
+
+```text
+GET /agent/runs/{run_id}
+GET /agent/runs/{run_id}/events
+GET /evidence/model-calls
+```
+
+The model-call endpoint shows provider, model, token counts, execution time, and
+errors without exposing API keys or full prompts.
+
+### Inspect one completed agent run
+
+Replace `5` below with the run ID returned by `POST /agent/runs`.
+
+Useful API requests in FastAPI docs:
+
+```text
+GET  /agent/runs/5
+GET  /agent/runs/5/events
+GET  /daily-reading/today
+GET  /evidence/model-calls?run_id=5
+GET  /evidence/clusters
+GET  /evidence/clusters/{cluster_id}
+```
+
+PowerShell equivalents for the run and its events:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/agent/runs/5
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/agent/runs/5/events
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/daily-reading/today
+```
+
+To start another run or resume a failed one:
+
+```powershell
+$body = @{
+    list_date = $null
+    regenerate = $true
+    background = $true
+    max_expansion_rounds = 3
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri http://127.0.0.1:8000/agent/runs `
+    -ContentType "application/json" `
+    -Body $body
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://127.0.0.1:8000/agent/runs/5/resume?background=true"
+```
+
+View the final reading list produced by one run in pgAdmin:
+
+```sql
+SELECT
+    dr.id AS run_id,
+    dr.status AS run_status,
+    drl.id AS reading_list_id,
+    drl.list_date,
+    dri.rank,
+    a.id AS article_id,
+    a.title,
+    a.word_count,
+    dri.total_score,
+    dri.reading_minutes,
+    a.canonical_url
+FROM daily_runs AS dr
+JOIN daily_reading_lists AS drl ON drl.id = dr.reading_list_id
+JOIN daily_reading_items AS dri ON dri.reading_list_id = drl.id
+JOIN articles AS a ON a.id = dri.article_id
+WHERE dr.id = 5
+ORDER BY dri.rank;
+```
+
+See every node attempt, including failures followed by successful resumes:
+
+```sql
+SELECT
+    node_name,
+    attempt,
+    status,
+    elapsed_ms,
+    message,
+    started_at,
+    completed_at
+FROM run_events
+WHERE run_id = 5
+ORDER BY id;
+```
+
+Summarize how many model requests and tokens each role used:
+
+```sql
+SELECT
+    role,
+    provider,
+    model,
+    status,
+    COUNT(*) AS request_count,
+    COALESCE(SUM(input_tokens), 0) AS input_tokens,
+    COALESCE(SUM(output_tokens), 0) AS output_tokens,
+    ROUND(COALESCE(SUM(elapsed_ms), 0)::numeric, 1) AS elapsed_ms
+FROM model_calls
+WHERE run_id = 5
+GROUP BY role, provider, model, status
+ORDER BY role, status;
+```
+
+See the number of claims extracted from each article during the run:
+
+```sql
+SELECT
+    ac.cluster_id,
+    ac.article_id,
+    a.title,
+    COUNT(*) AS extracted_claims
+FROM article_claims AS ac
+JOIN articles AS a ON a.id = ac.article_id
+JOIN daily_runs AS dr
+  ON ac.created_at BETWEEN dr.started_at AND dr.completed_at
+WHERE dr.id = 5
+GROUP BY ac.cluster_id, ac.article_id, a.title
+ORDER BY ac.cluster_id, ac.article_id;
+```
+
+Inspect chunks belonging to those claim-extraction articles:
+
+```sql
+WITH run_articles AS (
+    SELECT DISTINCT ac.article_id, ac.cluster_id
+    FROM article_claims AS ac
+    JOIN daily_runs AS dr
+      ON ac.created_at BETWEEN dr.started_at AND dr.completed_at
+    WHERE dr.id = 5
+)
+SELECT
+    ra.cluster_id,
+    ch.article_id,
+    a.title,
+    ch.chunk_index,
+    ch.word_count,
+    LEFT(ch.chunk_text, 500) AS chunk_preview,
+    vector_dims(ch.embedding) AS embedding_dimensions
+FROM run_articles AS ra
+JOIN article_chunks AS ch ON ch.article_id = ra.article_id
+JOIN articles AS a ON a.id = ch.article_id
+ORDER BY ra.cluster_id, ch.article_id, ch.chunk_index;
+```
+
+Count the claim pairs actually evaluated and saved by evidence comparison:
+
+```sql
+SELECT
+    cl.cluster_id,
+    cl.relationship,
+    COUNT(*) AS evaluated_pairs
+FROM claim_links AS cl
+JOIN daily_runs AS dr
+  ON cl.created_at BETWEEN dr.started_at AND dr.completed_at
+WHERE dr.id = 5
+GROUP BY cl.cluster_id, cl.relationship
+ORDER BY cl.cluster_id, cl.relationship;
+```
+
+The database stores all chunks, extracted claims, evaluated claim links, and model
+token totals. The current hybrid BM25/vector top-chunk ranking is computed in memory,
+so it does not yet preserve an exact historical list of selected chunk IDs. When an
+article has more chunks than the retrieval limit, the chunk query above shows the
+candidate pool rather than proving every row was sent to claim extraction. Phase 6
+should persist its selected supplemental evidence and citations so its exact inputs
+remain inspectable after a run.
+
+### View clusters and evidence
+
+Use these FastAPI endpoints:
+
+```text
+GET /evidence/clusters
+GET /evidence/clusters/{cluster_id}
+```
+
+The detail response contains cluster members, extracted claims, cross-report links,
+the representative article, and its selection explanation.
+
+Cluster membership is bounded before paid claim work. The system keeps at most five
+articles using article-embedding relevance, novelty, and publisher diversity.
+Members marked `redundant` remain visible for auditing but do not proceed to claim
+extraction or final selection.
+
+Every retained article is represented by at least one chunk. Okapi BM25 lexical
+scores and vector cosine scores are normalized and combined with configurable
+weights. At most 20 chunks continue to claim extraction. After DeepSeek extracts
+claims, a second retrieval stage keeps at most 20 cross-publisher claim pairs. The
+configured evidence provider receives those explicit pairs in batches of five; it
+never receives the old flat 60-claim request.
+
+Useful pgAdmin queries:
+
+```sql
+SELECT
+    sc.id,
+    sc.representative_title,
+    sc.representative_article_id,
+    sc.comparison_status,
+    COUNT(scm.id) AS member_count,
+    sc.expires_at
+FROM story_clusters AS sc
+JOIN story_cluster_members AS scm ON scm.cluster_id = sc.id
+GROUP BY sc.id
+ORDER BY sc.created_at DESC;
+```
+
+```sql
+SELECT
+    ac.cluster_id,
+    ac.article_id,
+    a.title,
+    ac.claim_text,
+    ac.claim_type,
+    ac.supporting_excerpt,
+    ac.confidence
+FROM article_claims AS ac
+JOIN articles AS a ON a.id = ac.article_id
+ORDER BY ac.cluster_id DESC, ac.article_id, ac.id;
+```
+
+```sql
+SELECT
+    cl.cluster_id,
+    left_claim.claim_text AS left_claim,
+    right_claim.claim_text AS right_claim,
+    cl.relationship,
+    cl.confidence,
+    cl.rationale
+FROM claim_links AS cl
+JOIN article_claims AS left_claim ON left_claim.id = cl.left_claim_id
+JOIN article_claims AS right_claim ON right_claim.id = cl.right_claim_id
+ORDER BY cl.cluster_id DESC, cl.id;
+```
+
+```sql
+SELECT
+    cc.cluster_id,
+    a.title AS selected_article,
+    cc.shared_claim_count,
+    cc.disputed_claim_count,
+    cc.selection_reason,
+    cc.model,
+    cc.expires_at
+FROM cluster_comparisons AS cc
+JOIN articles AS a ON a.id = cc.representative_article_id
+ORDER BY cc.created_at DESC;
+```
+
+Only clusters containing reports from at least two different publishers proceed to
+evidence comparison. Separate category feeds owned by the same publisher do not
+count as independent corroboration. Short articles become one chunk; long articles
+are chunked with overlap. Unselected intermediate evidence defaults to seven days.
+Evidence for articles selected into a daily list is extended to 30 days, which is
+also the hard configuration maximum for the MVP.
+
+After changing clustering, retrieval, or prompt settings, create a new agent run.
+Do not resume an older failed run because LangGraph resume continues from its saved
+node and intentionally does not repeat completed chunk/retrieval stages.
+
+Run Phase 5 tests:
+
+```powershell
+python -m pytest tests/test_phase_five.py -q
+```
 
 ## Stop development services
 

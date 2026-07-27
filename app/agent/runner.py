@@ -65,6 +65,8 @@ def initial_run_state(run: DailyRun, *, regenerate: bool) -> DailyRunState:
         candidate_article_ids=[],
         eligible_article_ids=[],
         selected_article_ids=[],
+        story_cluster_ids=[],
+        evidence_cluster_ids=[],
         candidate_scores=[],
         selected_scores=[],
         stats={},
