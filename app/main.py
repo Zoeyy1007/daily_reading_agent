@@ -1,9 +1,12 @@
 import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from pathlib import Path
 from time import perf_counter
 
 from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.api import (
@@ -15,6 +18,7 @@ from app.api import (
     ingestion,
     publishers,
     sources,
+    supplements,
 )
 from app.config import get_settings
 from app.db.session import engine
@@ -30,6 +34,7 @@ if not application_logger.handlers:
     application_logger.addHandler(application_handler)
 application_logger.propagate = False
 http_logger = logging.getLogger("daily_reading.http")
+static_directory = Path(__file__).resolve().parent / "static"
 
 
 @asynccontextmanager
@@ -49,6 +54,8 @@ app.include_router(daily_reading.router)
 app.include_router(feedback.router)
 app.include_router(agent_runs.router)
 app.include_router(evidence.router)
+app.include_router(supplements.router)
+app.mount("/static", StaticFiles(directory=static_directory), name="static")
 
 
 @app.middleware("http")
@@ -75,3 +82,8 @@ def health() -> dict[str, str]:
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
     return {"status": "ok"}
+
+
+@app.get("/", include_in_schema=False)
+def frontend() -> FileResponse:
+    return FileResponse(static_directory / "index.html")

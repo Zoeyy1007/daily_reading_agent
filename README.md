@@ -9,6 +9,9 @@ per-node timing, failure history, and resume support.
 Phase 5 adds provider-separated AI classification, Qwen embeddings, pgvector story
 clustering, DeepSeek claim extraction and evidence comparison, and deterministic
 representative-article selection.
+Phase 6 adds a bounded enrichment agent that searches same-cluster reports, stores
+source excerpts, and publishes only citation-verified supplemental cards within a
+50-percent word budget. External web/government discovery remains provider-configured.
 
 ## Run locally
 
@@ -21,6 +24,10 @@ fastapi dev app/main.py
 
 Open `http://127.0.0.1:8000/docs`, add a source with `POST /sources`, then run
 `POST /sources/{source_id}/fetch`.
+
+Open `http://127.0.0.1:8000/` for the responsive reading website. It displays today's
+list, full article text, source-grounded supplemental cards, saved articles, and
+optional-reason like/dislike feedback.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for source management, pgAdmin queries,
 manual ingestion, and scheduler instructions.

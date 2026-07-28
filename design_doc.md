@@ -483,7 +483,7 @@ selected article
 
 Initial tools:
 
-1. `local_cluster_search`
+1. `search_local`
    * Search the other retained articles from the selected article's story cluster.
    * Search the other four non-redundant articles first using hybrid BM25 and vector
      retrieval.
@@ -493,14 +493,15 @@ Initial tools:
      and canonical URL.
 
 2. `web_search`
-   * Search queries such as `latest news on {current_cluster_event}` when current
-     cluster evidence is incomplete or no longer fresh enough.
-   * Search results are discovery candidates, not evidence by themselves. The system
-     must fetch and extract the underlying page before using it as support.
+   * Search trusted reporting directly through Tavily for queries such as
+     `latest news on {current_cluster_event}` when cluster evidence is incomplete.
+   * Tavily returns ranked URLs and snippets only. The application fetches the page
+     and tries Trafilatura, then newspaper4k; Tavily Extract is a last-resort fallback.
+   * Search snippets are discovery candidates, not evidence by themselves.
    * Record publication time, retrieval time, publisher, URL, relevant excerpt, and
      content hash.
 
-3. `government_document_search`
+3. `mcp_government_search`
    * Search reliable primary government material for policies, legislation,
      regulations, court decisions, statistics, official announcements, and effective
      dates.
@@ -508,15 +509,39 @@ Initial tools:
      publication/effective date, URL, and supporting excerpt when available.
    * Prefer the primary government document over a report that merely describes it.
 
+4. `collect_chunk`
+   * Normalize and persist bounded excerpts returned by approved search tools.
+   * It may be requested only as the second call in a strict two-call tool step and
+     must reference the preceding search call ID.
+   * Local chunks reuse Phase 5 embeddings. External and government documents are
+     not embedded in the MVP; BM25 selects relevant excerpts because the content is
+     short-lived and used immediately for a grounded summary.
+
+Tool enablement, permissions, per-article call limits, result limits, allowed source
+types, trusted domains, and excerpt sizes are defined in
+`config/supplement_tools.yaml`. YAML names map only to fixed Python implementations
+and cannot authorize arbitrary code execution.
+
 Coverage gaps the agent may search for include:
 
 * Earlier events and timeline.
-* A policy or decision's official basis.
 * Who is affected and how.
 * Important information reported by another source but absent from the selected
   article.
-* Later developments that materially update the selected article.
 * Credible disagreement or uncertainty across sources.
+
+The first planning response is strict structured output containing
+`supplement_needed`, one decision for each of these four areas, `next_step`, a reason,
+and at most two typed tool calls. A tool step must contain exactly one search call
+and one dependent `collect_chunk` call. The executor validates names, arguments,
+permissions, and limits before dispatch, then sends a JSON result containing saved
+evidence IDs and excerpts to the next planning call.
+
+Each coverage decision may cite at most three distinct saved evidence chunks. The
+application keeps a monotonic coverage ledger for the gaps found in the first
+planning response. A gap stops consuming searches as soon as the planner marks it
+satisfied; otherwise three relevant cited chunks are the maximum target, not a
+minimum requirement.
 
 Consequences require especially strict grounding. They may appear only when a
 reliable source explicitly reports, analyzes, or predicts them. The supplemental
@@ -544,13 +569,13 @@ Persistent evidence workspace:
 * `supplement_evidence_items`: every retrieved local chunk, web page, or government
   excerpt, including source metadata, query, scores, content hash, reliability
   status, and whether it was selected.
-* `supplement_cards`: rendered sections such as background, timeline, official
-  basis, practical impact, latest update, or uncertainty.
+* `supplement_cards`: rendered sections such as background, timeline, practical
+  impact, missing context, or uncertainty.
 * `supplement_card_citations`: relational links from cards to the exact evidence
   items supporting them.
 
-Search tools should automatically write their results to this workspace. The agent
-can inspect and select saved items later without relying on temporary prompt memory.
+`collect_chunk` writes approved search results to this workspace. The agent can
+inspect and select saved items later without relying on temporary prompt memory.
 This also makes resumes, audits, evaluations, and multi-process deployment possible.
 
 Limits and termination:
@@ -560,8 +585,14 @@ Limits and termination:
 * Use local cluster search before paid or external web search when applicable.
 * Bound calls, retrieved candidates, selected sources, and agent iterations per
   article.
-* Stop when the identified gaps are supported, the word/source budget is reached,
-  or additional searches no longer add reliable information.
+* Require every structured model response field and its exact JSON data type. Reject
+  unknown fields, missing fields, coercible-but-incorrect types, duplicate
+  verification coordinates, and invalid citation IDs.
+* Retry malformed citation-verification output with bounded validation feedback;
+  fail closed when the configured attempt limit is exhausted.
+* Stop when every identified gap is satisfied or has reached the maximum target of
+  three distinct relevant chunks, the word/source budget is reached, or additional
+  searches no longer add reliable information.
 * A valid outcome is `no supplement needed` or `insufficient reliable evidence`.
 * Persist selected supplemental evidence and citations for up to 30 days by default;
   keep retention configurable.
@@ -570,20 +601,11 @@ Frontend behavior:
 
 * Display the selected article in its original form.
 * Put all AI-organized supplemental material in a separate collapsed/toggle area.
-* Group it into clearly named cards such as `Background`, `Official document`,
-  `Who is affected`, `Latest update`, and `Uncertainty`.
+* Group it into clearly named cards such as `Background`, `Who is affected`,
+  `Missing context`, and `Uncertainty`.
 * Show citations beside the supported text and provide links to every source.
 * Clearly label supplemental text as a sourced summary, not part of the original
   publisher's article.
-
-Deployment and polish remain later Phase 6 work:
-
-* Responsive frontend and iPhone web access.
-* Authentication and user-scoped source/domain controls.
-* Hosted PostgreSQL, cloud scheduler, and Docker deployment.
-* Logging, tracing, cost metrics, and an evaluation dataset measuring citation
-  support, source quality, coverage value, and unnecessary tool use.
-* README and architecture diagram.
 
 Keep RSS ingestion and normal article extraction as Python services. External search
 tools support supplemental discovery and do not replace the core ingestion system.

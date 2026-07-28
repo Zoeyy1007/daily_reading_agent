@@ -70,6 +70,8 @@ def _handlers(calls: Counter[str], fail_classify_once: bool = False):
             "apply_evidence",
             "personalize",
             "expand_sources",
+            "persist_list",
+            "supplement",
             "finalize",
         )
     }
@@ -166,3 +168,5 @@ def test_checkpoint_resume_does_not_repeat_completed_nodes() -> None:
     assert calls["ai_classify"] == 1
     assert calls["embed_articles"] == 1
     assert calls["compare_evidence"] == 1
+    assert calls["persist_list"] == 1
+    assert calls["supplement"] == 1

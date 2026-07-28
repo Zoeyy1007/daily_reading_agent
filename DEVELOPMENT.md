@@ -1026,6 +1026,392 @@ Run Phase 5 tests:
 python -m pytest tests/test_phase_five.py -q
 ```
 
+## Phase 6 source-grounded supplements
+
+Apply the Phase 6 migration and enable automatic enrichment in `.env`:
+
+```powershell
+alembic upgrade head
+```
+
+```dotenv
+PHASE_SIX_ENABLED=true
+SUPPLEMENT_MODEL=deepseek-v4-pro
+SUPPLEMENT_THINKING=false
+SUPPLEMENT_MAX_OUTPUT_TOKENS=4000
+SUPPLEMENT_MAX_ITERATIONS=4
+SUPPLEMENT_VERIFICATION_MAX_ATTEMPTS=3
+SUPPLEMENT_WORD_RATIO=0.5
+SUPPLEMENT_RETENTION_DAYS=30
+SUPPLEMENT_TOOL_POLICY_PATH=config/supplement_tools.yaml
+TAVILY_API_KEY=tvly-your-key
+TAVILY_SEARCH_DEPTH=none
+TAVILY_BASE_URL=https://api.tavily.com
+```
+
+Restart FastAPI after editing `.env`. New agent runs persist the daily list, generate
+supplements for its selected items, and then finalize the run. The local tool searches
+other articles in the same story cluster. Only articles whose saved Phase 5 AI
+classification has `is_news = true` enter supplementation; categories such as
+politics or technology do not control this decision.
+
+Tool names, permissions, call/result limits, source types, domain allowlists, and
+excerpt limits live in `config/supplement_tools.yaml`. For a tool step, the model
+must return exactly two typed calls: one search tool followed by `collect_chunk`
+referencing the search call ID. The validated executor runs them sequentially and
+returns JSON evidence results to the next planning call. External web and government
+search use provider interfaces. `web_search` calls Tavily directly when
+`TAVILY_API_KEY` is configured. The local value `TAVILY_SEARCH_DEPTH=none` means omit
+that optional request field, so Tavily applies its default. Search snippets are never
+accepted as evidence: the application fetches each chosen page and tries Trafilatura,
+then newspaper4k, then Tavily Extract only when both local extractors fail.
+Government search remains unavailable until its MCP provider is configured.
+
+The application also owns the termination rule. It remembers the four coverage
+areas identified as missing in the first plan. An area stops consuming searches
+when the planner marks it satisfied or cites three distinct saved evidence chunks
+for it. Three is a maximum target: one strong source may satisfy an area earlier.
+The configured iteration, tool-call, and word budgets remain hard safety limits.
+
+Citation verification retries invalid structured responses up to
+`SUPPLEMENT_VERIFICATION_MAX_ATTEMPTS`. Each retry receives the previous validation
+error so the model can repair missing fields, incorrect types, invalid evidence IDs,
+or missing statement coordinates. Logs expose the schema error and a bounded response
+preview, while never logging API keys or complete input articles. Useful markers are:
+
+```text
+ai_call stage=request_start
+ai_call stage=structured_validation status=error
+supplement stage=planning
+supplement stage=tool_call
+supplement stage=composition
+supplement stage=verification status=retry
+supplement stage=item_complete
+tavily_call stage=request_complete
+```
+
+### Run the complete pipeline and inspect its output
+
+Use two PowerShell terminals. In the first terminal, activate the virtual environment,
+start PostgreSQL, apply migrations, and start FastAPI:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+docker compose up -d db
+alembic upgrade head
+fastapi dev app/main.py
+```
+
+Keep that terminal open so you can watch stage timings, extraction failures, model
+calls, Tavily searches, and supplement errors. Also confirm that `.env` contains
+`PHASE_FIVE_ENABLED=true`, `PHASE_SIX_ENABLED=true`, and the required model and Tavily
+keys before starting FastAPI.
+
+In the second terminal, start the complete agent run in the background:
+
+```powershell
+$request = @{
+    regenerate = $true
+    background = $true
+} | ConvertTo-Json
+
+$run = Invoke-RestMethod `
+    -Method Post `
+    -Uri http://127.0.0.1:8000/agent/runs `
+    -ContentType "application/json" `
+    -Body $request
+
+$runId = $run.id
+$run | Select-Object id, status, current_node, reading_list_id
+```
+
+This graph collects enabled RSS sources, extracts articles, removes duplicates,
+classifies and embeds candidates, clusters stories, compares evidence, selects the
+daily articles, persists the reading list, generates supplements, and finalizes the
+run.
+
+Poll until the run becomes `complete` or `failed`:
+
+```powershell
+do {
+    Start-Sleep -Seconds 5
+    $run = Invoke-RestMethod `
+        -Method Get `
+        -Uri "http://127.0.0.1:8000/agent/runs/$runId"
+    $run | Select-Object id, status, current_node, selected_count, reading_list_id, last_error
+} while ($run.status -in @("queued", "running"))
+```
+
+If it fails, inspect every node attempt:
+
+```powershell
+Invoke-RestMethod `
+    -Method Get `
+    -Uri "http://127.0.0.1:8000/agent/runs/$runId/events" |
+    Select-Object node_name, attempt, status, elapsed_ms, message
+```
+
+Read today's list and remember its list ID:
+
+```powershell
+$readingList = Invoke-RestMethod `
+    -Method Get `
+    -Uri http://127.0.0.1:8000/daily-reading/today
+
+$listId = $readingList.id
+$readingList.items | Select-Object `
+    id, rank, reading_minutes, selection_reason, `
+    @{Name="article_id"; Expression={$_.article.id}}, `
+    @{Name="title"; Expression={$_.article.title}}, `
+    @{Name="url"; Expression={$_.article.canonical_url}}
+```
+
+Here, `items[].id` is the reading-list item ID used by supplement endpoints; it is
+different from `items[].article.id`.
+
+Inspect all supplements for the list:
+
+```powershell
+$supplements = Invoke-RestMethod `
+    -Method Get `
+    -Uri "http://127.0.0.1:8000/supplements/reading-lists/$listId"
+
+$supplements | Select-Object `
+    id, daily_reading_item_id, status, detected_gaps, iteration_count, `
+    tool_call_count, decision_reason, last_error
+
+$supplements | ConvertTo-Json -Depth 10
+```
+
+The expanded JSON contains `cards`, their verified `citations`, and the saved
+`evidence_items`. To inspect one article more conveniently:
+
+```powershell
+$itemId = $readingList.items[0].id
+$supplement = Invoke-RestMethod `
+    -Method Get `
+    -Uri "http://127.0.0.1:8000/supplements/items/$itemId"
+
+$supplement.cards | Select-Object card_type, heading, summary_text, verification_status
+$supplement.evidence_items | Select-Object id, source_type, publisher, title, url, query, excerpt
+```
+
+A supplement status of `skipped` is expected for a non-news article. `insufficient`
+means supplementation was appropriate but the bounded tools did not find enough
+reliable evidence. Neither status means the entire daily run failed.
+
+If the list endpoint prints nothing in PowerShell, force the result into an array and
+check its count:
+
+```powershell
+$supplements = @(Invoke-RestMethod `
+    -Method Get `
+    -Uri "http://127.0.0.1:8000/supplements/reading-lists/$listId")
+
+$supplements.Count
+```
+
+A count of `0` means no `supplement_runs` rows exist for that list. Check whether the
+agent node was disabled:
+
+```powershell
+$events = Invoke-RestMethod `
+    -Method Get `
+    -Uri "http://127.0.0.1:8000/agent/runs/$runId/events"
+
+$events | Where-Object node_name -eq "supplement" |
+    Select-Object status, message
+```
+
+If its message contains `"supplements": "disabled"`, add
+`PHASE_SIX_ENABLED=true` to `.env`, stop FastAPI with `Ctrl+C`, restart it, and create
+a new run. Settings are cached for the lifetime of the FastAPI process, so changing
+`.env` without restarting is not enough.
+
+To regenerate only one item's supplement without rerunning the complete graph:
+
+```powershell
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://127.0.0.1:8000/supplements/items/$itemId/generate"
+```
+
+In pgAdmin, inspect the latest run and its reading list:
+
+```sql
+SELECT
+    dr.id AS run_id,
+    dr.status AS run_status,
+    dr.current_node,
+    dr.reading_list_id,
+    dr.selected_count,
+    dr.last_error,
+    dr.started_at,
+    dr.completed_at
+FROM daily_runs AS dr
+ORDER BY dr.created_at DESC
+LIMIT 1;
+
+SELECT
+    dr.id AS run_id,
+    drl.id AS reading_list_id,
+    dri.id AS reading_item_id,
+    dri.rank,
+    a.id AS article_id,
+    a.title,
+    a.canonical_url,
+    dri.reading_minutes,
+    dri.selection_reason
+FROM daily_runs AS dr
+JOIN daily_reading_lists AS drl ON drl.id = dr.reading_list_id
+JOIN daily_reading_items AS dri ON dri.reading_list_id = drl.id
+JOIN articles AS a ON a.id = dri.article_id
+WHERE dr.id = (SELECT MAX(id) FROM daily_runs)
+ORDER BY dri.rank;
+```
+
+Inspect the verified supplement cards and their cited evidence for the latest run:
+
+```sql
+SELECT
+    sr.id AS supplement_run_id,
+    dri.rank,
+    a.title AS selected_article,
+    sr.status,
+    sr.detected_gaps,
+    sc.card_type,
+    sc.heading,
+    sc.summary_text,
+    scc.statement_text,
+    sei.id AS evidence_id,
+    sei.source_type,
+    sei.publisher,
+    sei.url,
+    LEFT(sei.excerpt, 500) AS evidence_excerpt
+FROM daily_runs AS dr
+JOIN daily_reading_lists AS drl ON drl.id = dr.reading_list_id
+JOIN daily_reading_items AS dri ON dri.reading_list_id = drl.id
+JOIN articles AS a ON a.id = dri.article_id
+LEFT JOIN supplement_runs AS sr ON sr.daily_reading_item_id = dri.id
+LEFT JOIN supplement_cards AS sc ON sc.supplement_run_id = sr.id
+LEFT JOIN supplement_card_citations AS scc ON scc.card_id = sc.id
+LEFT JOIN supplement_evidence_items AS sei ON sei.id = scc.evidence_item_id
+WHERE dr.id = (SELECT MAX(id) FROM daily_runs)
+ORDER BY dri.rank, sc.display_order, scc.statement_index, scc.citation_order;
+```
+
+To test one existing daily-list item, get item IDs from `GET /daily-reading/today`,
+then call:
+
+```text
+POST /supplements/items/{item_id}/generate
+GET  /supplements/items/{item_id}
+GET  /supplements/reading-lists/{reading_list_id}
+```
+
+PowerShell example:
+
+```powershell
+Invoke-RestMethod `
+    -Method Post `
+    -Uri http://127.0.0.1:8000/supplements/items/1/generate
+
+Invoke-RestMethod `
+    -Method Get `
+    -Uri http://127.0.0.1:8000/supplements/items/1
+```
+
+The synchronous POST can take a while because planning, composition, and strict
+citation verification are separate model calls. A result may validly be `skipped` or
+`insufficient`, especially when the selected article has no multi-report cluster and
+external search is not configured.
+
+Inspect supplement decisions in pgAdmin:
+
+```sql
+SELECT
+    sr.id AS supplement_run_id,
+    dri.id AS reading_item_id,
+    dri.rank,
+    a.id AS article_id,
+    a.title,
+    sr.status,
+    sr.detected_gaps,
+    sr.decision_reason,
+    sr.tool_history,
+    sr.original_word_count,
+    sr.word_budget,
+    sr.iteration_count,
+    sr.tool_call_count,
+    sr.last_error
+FROM supplement_runs AS sr
+JOIN daily_reading_items AS dri ON dri.id = sr.daily_reading_item_id
+JOIN articles AS a ON a.id = dri.article_id
+ORDER BY sr.created_at DESC;
+```
+
+Inspect saved evidence:
+
+```sql
+SELECT
+    sei.supplement_run_id,
+    sei.id AS evidence_id,
+    sei.source_type,
+    sei.title,
+    sei.publisher,
+    sei.url,
+    sei.query,
+    sei.retrieval_score,
+    sei.reliability_status,
+    sei.selected,
+    LEFT(sei.excerpt, 500) AS excerpt
+FROM supplement_evidence_items AS sei
+ORDER BY sei.supplement_run_id DESC, sei.retrieval_score DESC;
+```
+
+Inspect verified cards and their statement-level citations:
+
+```sql
+SELECT
+    sc.supplement_run_id,
+    sc.display_order,
+    sc.card_type,
+    sc.heading,
+    sc.summary_text,
+    sc.word_count,
+    scc.statement_index,
+    scc.statement_text,
+    sei.id AS evidence_id,
+    sei.publisher,
+    sei.url,
+    sei.excerpt
+FROM supplement_cards AS sc
+JOIN supplement_card_citations AS scc ON scc.card_id = sc.id
+JOIN supplement_evidence_items AS sei ON sei.id = scc.evidence_item_id
+ORDER BY sc.supplement_run_id DESC, sc.display_order,
+         scc.statement_index, scc.citation_order;
+```
+
+Inspect Phase 6 model cost and timing for one agent run:
+
+```sql
+SELECT role, provider, model, status, input_tokens, output_tokens, elapsed_ms, error
+FROM model_calls
+WHERE run_id = 5
+  AND role IN (
+      'supplement_planning',
+      'supplement_composition',
+      'supplement_verification'
+  )
+ORDER BY created_at;
+```
+
+Run Phase 6 tests:
+
+```powershell
+python -m pytest tests/test_phase_six.py -q
+```
+
 ## Stop development services
 
 Stop FastAPI with `Ctrl+C` in its terminal.
@@ -1040,4 +1426,31 @@ Start it again later with:
 
 ```powershell
 docker compose up -d db
+```
+
+## Frontend website
+
+The responsive frontend is served by the same FastAPI process; there is no separate
+Node installation or frontend development server. Start the backend normally:
+
+```powershell
+fastapi dev app/main.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000/
+```
+
+The home route displays today's reading list. Article routes load full extracted text,
+the completed supplement for the matching reading-list item, citation links, saved
+state, and like/dislike feedback. The reason dialog accepts a listed reason or no
+reason, which sends JSON `null`. The navigation drawer currently contains Today and
+Saved. FastAPI's API documentation remains available at `/docs`.
+
+Run the frontend shell test with:
+
+```powershell
+python -m pytest tests/test_frontend.py -q
 ```

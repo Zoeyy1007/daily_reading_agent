@@ -6,6 +6,9 @@ from app.ai.schemas import (
     ClassificationResult,
     EvidenceComparisonResult,
     EvidencePairInput,
+    SupplementDraft,
+    SupplementPlan,
+    SupplementVerification,
 )
 
 T = TypeVar("T")
@@ -66,6 +69,40 @@ class EvidenceComparisonProvider(Protocol):
     ) -> ProviderResult[EvidenceComparisonResult]: ...
 
 
+class SupplementProvider(Protocol):
+    provider_name: str
+    model: str
+
+    def plan(
+        self,
+        *,
+        article_title: str,
+        article_content: str,
+        cluster_event: str | None,
+        evidence: list[dict[str, object]],
+        tool_history: list[dict[str, object]],
+        available_tools: list[dict[str, object]],
+        coverage_targets: dict[str, dict[str, object]],
+    ) -> ProviderResult[SupplementPlan]: ...
+
+    def compose(
+        self,
+        *,
+        article_title: str,
+        gaps: list[str],
+        evidence: list[dict[str, object]],
+        word_budget: int,
+    ) -> ProviderResult[SupplementDraft]: ...
+
+    def verify(
+        self,
+        *,
+        draft: SupplementDraft,
+        evidence: list[dict[str, object]],
+        validation_feedback: str | None = None,
+    ) -> ProviderResult[SupplementVerification]: ...
+
+
 @dataclass(slots=True)
 class ModelProviders:
     """Runtime-only provider bundle; never store provider clients in graph state."""
@@ -74,3 +111,4 @@ class ModelProviders:
     embedding: EmbeddingProvider | None = None
     claim_extraction: ClaimExtractionProvider | None = None
     evidence_comparison: EvidenceComparisonProvider | None = None
+    supplement: SupplementProvider | None = None

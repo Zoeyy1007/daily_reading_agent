@@ -31,7 +31,9 @@ from app.nodes.filter import filter_node
 from app.nodes.finalize import finalize_node
 from app.nodes.load_settings import load_settings_node
 from app.nodes.personalize import personalize_node
+from app.nodes.persist_list import persist_list_node
 from app.nodes.select import select_node
+from app.nodes.supplement import supplement_node
 from app.services.run_service import (
     elapsed_milliseconds,
     fail_run,
@@ -62,6 +64,8 @@ DEFAULT_HANDLERS: dict[str, NodeHandler] = {
     "personalize": personalize_node,
     "select": select_node,
     "expand_sources": expand_sources_node,
+    "persist_list": persist_list_node,
+    "supplement": supplement_node,
     "finalize": finalize_node,
 }
 
@@ -165,6 +169,7 @@ def build_daily_run_graph(
             "embed_chunks",
             "extract_claims",
             "compare_evidence",
+            "supplement",
         }:
             builder.add_node(name, node, retry_policy=retry_policy)
         else:
@@ -190,8 +195,10 @@ def build_daily_run_graph(
     builder.add_conditional_edges(
         "select",
         route_after_select,
-        {"finalize": "finalize", "expand_sources": "expand_sources"},
+        {"finalize": "persist_list", "expand_sources": "expand_sources"},
     )
     builder.add_edge("expand_sources", "classify")
+    builder.add_edge("persist_list", "supplement")
+    builder.add_edge("supplement", "finalize")
     builder.add_edge("finalize", END)
     return builder.compile(checkpointer=checkpointer)

@@ -31,6 +31,13 @@ from app.db.models.evidence import (
 )
 from app.db.models.publisher import Publisher
 from app.db.models.source import Source
+from app.db.models.supplement import (
+    SupplementCard,
+    SupplementCardCitation,
+    SupplementEvidenceItem,
+    SupplementRun,
+    SupplementStatus,
+)
 from app.db.models.user import User
 
 __all__ = [
@@ -60,5 +67,10 @@ __all__ = [
     "Source",
     "StoryCluster",
     "StoryClusterMember",
+    "SupplementCard",
+    "SupplementCardCitation",
+    "SupplementEvidenceItem",
+    "SupplementRun",
+    "SupplementStatus",
     "User",
 ]

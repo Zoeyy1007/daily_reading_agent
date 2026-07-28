@@ -1,18 +1,39 @@
 import json
+import logging
 from copy import deepcopy
 from time import perf_counter
 from typing import Any, TypeVar
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.ai.providers import EmbeddingResult, ProviderResult
 
 T = TypeVar("T", bound=BaseModel)
+logger = logging.getLogger("daily_reading.ai")
 
 
 class ProviderAPIError(RuntimeError):
     pass
+
+
+class StructuredOutputError(ProviderAPIError):
+    def __init__(
+        self,
+        *,
+        model: str,
+        output_model: str,
+        validation_error: str,
+        response_preview: str,
+    ) -> None:
+        self.model = model
+        self.output_model = output_model
+        self.validation_error = validation_error
+        self.response_preview = response_preview
+        super().__init__(
+            f"Invalid {output_model} structured output from {model}: "
+            f"{validation_error}"
+        )
 
 
 def _inline_json_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
@@ -61,6 +82,8 @@ class OpenAICompatibleClient:
 
     def _post(self, path: str, payload: dict[str, object]) -> tuple[dict[str, object], float]:
         started = perf_counter()
+        model = str(payload.get("model") or "n/a")
+        logger.info("ai_call stage=request_start endpoint=%s model=%s", path, model)
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(
@@ -75,8 +98,25 @@ class OpenAICompatibleClient:
             data = response.json()
             if not isinstance(data, dict):
                 raise ProviderAPIError("Provider returned a non-object response")
-            return data, (perf_counter() - started) * 1000
+            elapsed_ms = (perf_counter() - started) * 1000
+            logger.info(
+                "ai_call stage=request_complete status=ok endpoint=%s model=%s "
+                "elapsed_ms=%.2f request_id=%s",
+                path,
+                model,
+                elapsed_ms,
+                data.get("id"),
+            )
+            return data, elapsed_ms
         except (httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "ai_call stage=request_complete status=error endpoint=%s model=%s "
+                "elapsed_ms=%.2f error=%s",
+                path,
+                model,
+                (perf_counter() - started) * 1000,
+                exc,
+            )
             raise ProviderAPIError(f"Provider request failed: {exc}") from exc
 
     def structured_chat(
@@ -116,14 +156,47 @@ class OpenAICompatibleClient:
             "thinking": {"type": "enabled" if thinking else "disabled"},
         }
         data, elapsed_ms = self._post("chat/completions", payload)
+        content = ""
         try:
             choices = data["choices"]
             content = choices[0]["message"]["content"]  # type: ignore[index]
+            if not isinstance(content, str):
+                raise TypeError("message content is not a string")
             value = output_model.model_validate_json(content)
-        except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise ProviderAPIError("Provider returned invalid structured output") from exc
+        except (KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
+            if isinstance(exc, ValidationError):
+                validation_error = json.dumps(
+                    exc.errors(include_url=False, include_input=False),
+                    ensure_ascii=False,
+                    default=str,
+                )[:4000]
+            else:
+                validation_error = f"{type(exc).__name__}: {exc}"
+            preview = " ".join(str(content).split())[:1500]
+            logger.warning(
+                "ai_call stage=structured_validation status=error model=%s "
+                "output_model=%s validation_error=%s response_preview=%s",
+                model,
+                output_model.__name__,
+                validation_error,
+                preview,
+            )
+            raise StructuredOutputError(
+                model=model,
+                output_model=output_model.__name__,
+                validation_error=validation_error,
+                response_preview=preview,
+            ) from exc
         input_tokens, output_tokens = _usage(data)
         request_id = data.get("id")
+        logger.info(
+            "ai_call stage=structured_validation status=ok model=%s output_model=%s "
+            "input_tokens=%s output_tokens=%s",
+            model,
+            output_model.__name__,
+            input_tokens,
+            output_tokens,
+        )
         return ProviderResult(
             value=value,
             request_id=str(request_id) if request_id else None,

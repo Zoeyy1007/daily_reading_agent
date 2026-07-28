@@ -7,6 +7,9 @@ from app.ai.schemas import (
     ClassificationResult,
     EvidenceComparisonResult,
     EvidencePairInput,
+    SupplementDraft,
+    SupplementPlan,
+    SupplementVerification,
 )
 
 
@@ -131,3 +134,129 @@ class KimiEvidenceProvider(StructuredEvidenceProvider):
 class DeepSeekEvidenceProvider(StructuredEvidenceProvider):
     provider_name = "deepseek"
     strict_schema = False
+
+
+class DeepSeekSupplementProvider:
+    provider_name = "deepseek"
+
+    def __init__(
+        self,
+        client: OpenAICompatibleClient,
+        *,
+        model: str,
+        max_tokens: int,
+        thinking: bool,
+    ) -> None:
+        self.client = client
+        self.model = model
+        self.max_tokens = max_tokens
+        self.thinking = thinking
+
+    def plan(
+        self,
+        *,
+        article_title: str,
+        article_content: str,
+        cluster_event: str | None,
+        evidence: list[dict[str, object]],
+        tool_history: list[dict[str, object]],
+        available_tools: list[dict[str, object]],
+        coverage_targets: dict[str, dict[str, object]],
+    ) -> ProviderResult[SupplementPlan]:
+        payload = {
+            "article_title": article_title,
+            "article_content": article_content[:24000],
+            "cluster_event": cluster_event,
+            "saved_evidence": evidence,
+            "tool_history": tool_history,
+            "available_tools": available_tools,
+            "coverage_targets": coverage_targets,
+        }
+        return self.client.structured_chat(
+            model=self.model,
+            system_prompt=(
+                "You are a bounded research planner. First assess exactly four coverage areas: "
+                "earlier events/timeline, affected people/effects, missing information from "
+                "other reporting, and disagreement/uncertainty. Do not assess official basis or "
+                "latest developments as separate gaps. Return strict structured output. If no "
+                "supplement is needed, set supplement_needed=false and next_step=stop. For a "
+                "coverage decision, evidence_ids may contain at most three distinct IDs from "
+                "saved_evidence that directly address that area. Treat coverage_targets as the "
+                "application-owned research ledger: do not search areas marked satisfied or "
+                "max_target_reached, and focus queries on areas marked search_needed. A single "
+                "strong source may satisfy an area before it reaches three items. For a "
+                "tool step, return exactly two calls: one available search tool followed by "
+                "collect_chunk whose source_call_id references the search call. Prefer "
+                "search_local before external search. After tool results, choose another tool "
+                "step, compose, or stop. You are not a factual source and must never provide "
+                "missing facts yourself."
+            ),
+            user_prompt=json.dumps(payload, ensure_ascii=False),
+            output_model=SupplementPlan,
+            max_tokens=min(self.max_tokens, 2500),
+            thinking=self.thinking,
+            strict_schema=False,
+        )
+
+    def compose(
+        self,
+        *,
+        article_title: str,
+        gaps: list[str],
+        evidence: list[dict[str, object]],
+        word_budget: int,
+    ) -> ProviderResult[SupplementDraft]:
+        payload = {
+            "article_title": article_title,
+            "gaps": gaps,
+            "word_budget": word_budget,
+            "evidence": evidence,
+        }
+        return self.client.structured_chat(
+            model=self.model,
+            system_prompt=(
+                "Write concise supplemental cards using only the supplied evidence excerpts. "
+                "Every statement must cite one or more evidence_ids that directly support the "
+                "entire statement. Do not add general knowledge, causal speculation, or bridge "
+                "facts. Consequences are allowed only when an excerpt explicitly attributes "
+                "that prediction or analysis; preserve that attribution. Stay within the total "
+                "word budget. Return no cards when the evidence is insufficient."
+            ),
+            user_prompt=json.dumps(payload, ensure_ascii=False),
+            output_model=SupplementDraft,
+            max_tokens=self.max_tokens,
+            thinking=self.thinking,
+            strict_schema=False,
+        )
+
+    def verify(
+        self,
+        *,
+        draft: SupplementDraft,
+        evidence: list[dict[str, object]],
+        validation_feedback: str | None = None,
+    ) -> ProviderResult[SupplementVerification]:
+        payload = {
+            "draft": draft.model_dump(),
+            "evidence": evidence,
+            "previous_validation_error": validation_feedback,
+        }
+        return self.client.structured_chat(
+            model=self.model,
+            system_prompt=(
+                "Act as a strict citation verifier. Mark a statement supported only when its "
+                "cited excerpts directly support every factual part of it. Reject added causal "
+                "claims, unattributed predictions, synthesis not stated by a source, invalid "
+                "evidence IDs, and partial support. Return exactly one entry for every draft "
+                "statement using its zero-based card_index and statement_index. Every requested "
+                "field is mandatory and must use the exact JSON data type in the schema. A "
+                "supported statement requires one or more valid evidence_ids; an unsupported "
+                "statement must use an empty evidence_ids array. If a previous validation error "
+                "is supplied, correct it in the new response."
+            ),
+            user_prompt=json.dumps(payload, ensure_ascii=False),
+            output_model=SupplementVerification,
+            max_tokens=self.max_tokens,
+            thinking=self.thinking,
+            strict_schema=False,
+        )

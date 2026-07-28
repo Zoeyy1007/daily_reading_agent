@@ -3,11 +3,29 @@ from app.ai.direct_providers import (
     DeepSeekClaimProvider,
     DeepSeekClassificationProvider,
     DeepSeekEvidenceProvider,
+    DeepSeekSupplementProvider,
     KimiEvidenceProvider,
     QwenEmbeddingProvider,
 )
 from app.ai.providers import ModelProviders
 from app.config import Settings
+
+
+def build_supplement_provider(settings: Settings) -> DeepSeekSupplementProvider:
+    key = settings.deepseek_api_key
+    if key is None:
+        raise ValueError("DEEPSEEK_API_KEY is required for Phase 6 supplements")
+    client = OpenAICompatibleClient(
+        api_key=key.get_secret_value(),
+        base_url=settings.deepseek_base_url,
+        timeout_seconds=max(settings.http_timeout_seconds, 120),
+    )
+    return DeepSeekSupplementProvider(
+        client,
+        model=settings.supplement_model,
+        max_tokens=settings.supplement_max_output_tokens,
+        thinking=settings.supplement_thinking,
+    )
 
 
 def build_model_providers(settings: Settings) -> ModelProviders:
@@ -75,4 +93,5 @@ def build_model_providers(settings: Settings) -> ModelProviders:
             thinking=settings.claim_extraction_thinking,
         ),
         evidence_comparison=evidence_provider,
+        supplement=(build_supplement_provider(settings) if settings.phase_six_enabled else None),
     )

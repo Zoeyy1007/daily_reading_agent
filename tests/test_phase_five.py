@@ -71,6 +71,8 @@ def test_structured_outputs_reject_unknown_fields_and_bad_confidence() -> None:
         claim_text="The rate increased.",
         claim_type="factual",
         supporting_excerpt="The rate increased.",
+        attribution=None,
+        primary_source_url=None,
         confidence=0.9,
     )
     assert claim.attribution is None

@@ -29,10 +29,12 @@ class ArticleExtractor:
         *,
         minimum_words: int,
         jina_api_key: str | None = None,
+        use_jina_fallback: bool = True,
     ) -> None:
         self.client = client
         self.minimum_words = minimum_words
         self.jina_api_key = jina_api_key
+        self.use_jina_fallback = use_jina_fallback
 
     @staticmethod
     def _normalize(text: str) -> str:
@@ -116,17 +118,18 @@ class ArticleExtractor:
             except Exception as exc:
                 errors.append(f"newspaper4k: {exc}")
 
-        try:
-            headers = {"Accept": "text/plain", "X-Return-Format": "text"}
-            if self.jina_api_key:
-                headers["Authorization"] = f"Bearer {self.jina_api_key}"
-            response = self.client.get(f"https://r.jina.ai/{url}", headers=headers)
-            response.raise_for_status()
-            result = self._result(response.text, extractor="jina")
-            if result:
-                return result
-            errors.append("jina returned too little content")
-        except Exception as exc:
-            errors.append(f"jina: {exc}")
+        if self.use_jina_fallback:
+            try:
+                headers = {"Accept": "text/plain", "X-Return-Format": "text"}
+                if self.jina_api_key:
+                    headers["Authorization"] = f"Bearer {self.jina_api_key}"
+                response = self.client.get(f"https://r.jina.ai/{url}", headers=headers)
+                response.raise_for_status()
+                result = self._result(response.text, extractor="jina")
+                if result:
+                    return result
+                errors.append("jina returned too little content")
+            except Exception as exc:
+                errors.append(f"jina: {exc}")
 
         raise ExtractionFailedError("; ".join(errors))

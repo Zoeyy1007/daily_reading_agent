@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -95,6 +95,31 @@ class Settings(BaseSettings):
     cluster_metadata_retention_days: int = Field(default=30, ge=1, le=90)
     model_call_log_retention_days: int = Field(default=30, ge=1, le=90)
 
+    # Phase 6 source-grounded supplemental information
+    phase_six_enabled: bool = False
+    supplement_model: str = "deepseek-v4-pro"
+    supplement_thinking: bool = False
+    supplement_max_output_tokens: int = Field(default=4000, ge=500)
+    supplement_max_iterations: int = Field(default=4, ge=1, le=10)
+    supplement_verification_max_attempts: int = Field(default=3, ge=1, le=5)
+    supplement_word_ratio: float = Field(default=0.5, gt=0, le=0.5)
+    supplement_retention_days: int = Field(default=30, ge=1, le=30)
+    supplement_tool_policy_path: str = "config/supplement_tools.yaml"
+    tavily_api_key: SecretStr | None = None
+    tavily_base_url: str = "https://api.tavily.com"
+    tavily_search_depth: str = "none"
+
+    @field_validator("tavily_search_depth")
+    @classmethod
+    def validate_tavily_search_depth(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        allowed = {"none", "basic", "advanced", "fast", "ultra-fast"}
+        if normalized not in allowed:
+            raise ValueError(
+                "TAVILY_SEARCH_DEPTH must be none, basic, advanced, fast, or ultra-fast"
+            )
+        return normalized
+
     @staticmethod
     def _string_set(value: str) -> set[str]:
         return {item.strip().casefold() for item in value.split(",") if item.strip()}
@@ -127,6 +152,11 @@ class Settings(BaseSettings):
     def resolved_database_url(self) -> str:
         """Prefer Docker's IPv4 host binding when a local URL says localhost."""
         return self.database_url.replace("@localhost:", "@127.0.0.1:")
+
+    @property
+    def resolved_tavily_search_depth(self) -> str | None:
+        """`none` is an app sentinel meaning that Tavily should use its default."""
+        return None if self.tavily_search_depth == "none" else self.tavily_search_depth
 
 
 @lru_cache

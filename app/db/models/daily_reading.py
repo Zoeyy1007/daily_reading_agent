@@ -21,6 +21,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.db.models.article import Article
+    from app.db.models.supplement import SupplementRun
     from app.db.models.user import User
 
 
@@ -99,3 +100,6 @@ class DailyReadingItem(Base):
 
     reading_list: Mapped["DailyReadingList"] = relationship(back_populates="items")
     article: Mapped["Article"] = relationship(back_populates="reading_list_items")
+    supplement_run: Mapped["SupplementRun | None"] = relationship(
+        back_populates="daily_reading_item", cascade="all, delete-orphan", uselist=False
+    )

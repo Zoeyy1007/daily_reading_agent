@@ -1,0 +1,75 @@
+version: 1
+
+# This file is declarative policy only. Tool names are mapped to fixed Python
+# implementations; the model cannot import modules or execute arbitrary functions.
+tools:
+  search_local:
+    description: Search other saved articles in the selected article's story cluster.
+    enabled: true
+    agent_callable: true
+    max_calls_per_article: 2
+    max_results: 8
+    permissions:
+      allowed_source_types: [local_article]
+      same_cluster_only: true
+      exclude_selected_article: true
+      allowed_relationships: [coverage, redundant]
+      allowed_domains: []
+      require_full_page_fetch: false
+      persist_evidence: true
+      max_excerpt_words: 900
+
+  web_search:
+    description: Discover current reporting from explicitly trusted web domains using Tavily.
+    enabled: true
+    agent_callable: true
+    max_calls_per_article: 2
+    max_results: 3
+    permissions:
+      allowed_source_types: [web]
+      same_cluster_only: false
+      exclude_selected_article: true
+      allowed_relationships: []
+      allowed_domains:
+        - reuters.com
+        - apnews.com
+        - bbc.com
+      require_full_page_fetch: true
+      persist_evidence: true
+      max_excerpt_words: 350
+
+  mcp_government_search:
+    description: Discover primary official documents from approved government domains.
+    enabled: false
+    agent_callable: true
+    max_calls_per_article: 2
+    max_results: 3
+    permissions:
+      allowed_source_types: [government]
+      same_cluster_only: false
+      exclude_selected_article: true
+      allowed_relationships: []
+      allowed_domains:
+        - gov
+        - gov.uk
+        - canada.ca
+        - europa.eu
+      require_full_page_fetch: true
+      persist_evidence: true
+      max_excerpt_words: 350
+
+  collect_chunk:
+    description: Normalize and persist bounded excerpts returned by an approved search tool.
+    enabled: true
+    agent_callable: true
+    max_calls_per_article: 12
+    max_results: 12
+    permissions:
+      allowed_source_types: [local_article, web, government]
+      same_cluster_only: false
+      exclude_selected_article: true
+      allowed_relationships: [coverage, redundant]
+      allowed_domains: []
+      require_full_page_fetch: true
+      persist_evidence: true
+      max_excerpt_words: 900

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f2ea" />
+    <meta
+      name="description"
+      content="A focused daily reading list with source-grounded context."
+    />
+    <title>Daily Reading</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <button
+        id="menu-button"
+        class="icon-button menu-button"
+        type="button"
+        aria-label="Open navigation"
+        aria-controls="navigation-drawer"
+        aria-expanded="false"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+      </button>
+      <a class="brand" href="#/" aria-label="Daily Reading home">Daily Reading</a>
+      <div class="topbar-spacer" aria-hidden="true"></div>
+    </header>
+
+    <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+    <aside id="navigation-drawer" class="drawer" aria-label="Site navigation" aria-hidden="true">
+      <div class="drawer-heading">Read</div>
+      <nav>
+        <a class="drawer-link" href="#/" data-route="home">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M3 11.5 12 4l9 7.5V21h-6v-6H9v6H3z" />
+          </svg>
+          Today
+        </a>
+        <a class="drawer-link" href="#/saved" data-route="saved">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M6 3h12v18l-6-4-6 4z" />
+          </svg>
+          Saved
+        </a>
+      </nav>
+    </aside>
+
+    <main id="app" tabindex="-1">
+      <section class="page-shell loading-view" aria-live="polite">
+        <div class="loading-line loading-line-short"></div>
+        <div class="loading-line"></div>
+        <div class="card-skeleton-grid">
+          <div class="card-skeleton"></div>
+          <div class="card-skeleton"></div>
+          <div class="card-skeleton"></div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="feedback-dialog" class="feedback-dialog">
+      <form id="feedback-form" method="dialog">
+        <div class="dialog-kicker" id="feedback-kicker">Your feedback</div>
+        <h2 id="feedback-title">What influenced your reaction?</h2>
+        <p class="dialog-copy">Choosing a reason is optional.</p>
+        <div id="reason-options" class="reason-options"></div>
+        <div class="dialog-actions">
+          <button id="feedback-cancel" class="button button-quiet" value="cancel">Cancel</button>
+          <button id="feedback-submit" class="button button-primary" value="default">
+            Save feedback
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>
