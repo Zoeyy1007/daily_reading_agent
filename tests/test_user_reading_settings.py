@@ -133,3 +133,19 @@ def test_scheduler_defaults_to_disabled_at_eight_am_pacific() -> None:
     assert settings.scheduler_enabled is False
     assert settings.daily_list_hour == 8
     assert settings.scheduler_timezone == "America/Los_Angeles"
+
+
+@pytest.mark.parametrize(
+    ("database_url", "expected_prefix"),
+    [
+        ("postgres://user:pass@host/db", "postgresql+psycopg://"),
+        ("postgresql://user:pass@host/db", "postgresql+psycopg://"),
+        ("postgresql+psycopg://user:pass@host/db", "postgresql+psycopg://"),
+    ],
+)
+def test_hosted_database_urls_use_psycopg_v3(
+    database_url: str, expected_prefix: str
+) -> None:
+    settings = Settings(_env_file=None, database_url=database_url)
+
+    assert settings.resolved_database_url.startswith(expected_prefix)

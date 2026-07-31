@@ -32,5 +32,8 @@ optional-reason like/dislike feedback.
 See [DEVELOPMENT.md](DEVELOPMENT.md) for source management, pgAdmin queries,
 manual ingestion, and scheduler instructions.
 
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the Railway container deployment,
+Supabase database migration, and production environment variables.
+
 Set `SCHEDULER_ENABLED=true` in `.env` to enable periodic ingestion. Keep it false
 while using a reload server if you want to avoid scheduler restarts during edits.

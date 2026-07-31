@@ -8,3 +8,6 @@ __pycache__/
 DEVELOPMENT.md
 metrics/
 docs/
+*.dump
+*.backup
+db_dump/

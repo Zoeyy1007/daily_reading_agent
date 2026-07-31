@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+psycopg://daily_reading:daily_reading@127.0.0.1:5432/daily_reading"
     )
+    database_pool_size: int = Field(default=5, ge=1, le=20)
+    database_max_overflow: int = Field(default=5, ge=0, le=20)
+    database_pool_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    database_pool_recycle_seconds: int = Field(default=1800, ge=60, le=7200)
     rss_poll_minutes: int = Field(default=30, ge=1)
     http_timeout_seconds: float = Field(default=20, gt=0)
     article_min_words: int = Field(default=150, ge=1)
@@ -165,8 +169,13 @@ class Settings(BaseSettings):
 
     @property
     def resolved_database_url(self) -> str:
-        """Prefer Docker's IPv4 host binding when a local URL says localhost."""
-        return self.database_url.replace("@localhost:", "@127.0.0.1:")
+        """Normalize hosted PostgreSQL URLs to the installed psycopg v3 driver."""
+        url = self.database_url.strip()
+        if url.startswith("postgres://"):
+            url = "postgresql+psycopg://" + url.removeprefix("postgres://")
+        elif url.startswith("postgresql://"):
+            url = "postgresql+psycopg://" + url.removeprefix("postgresql://")
+        return url.replace("@localhost:", "@127.0.0.1:")
 
     @property
     def resolved_tavily_search_depth(self) -> str | None:
