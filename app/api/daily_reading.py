@@ -39,7 +39,9 @@ def generate_list(
 def get_today_list(session: DBSession, user_id: CurrentUserID) -> object:
     reading_list = get_daily_reading_list(session, local_today(), user_id)
     if reading_list is None:
-        raise HTTPException(status_code=404, detail="Today's reading list has not been generated")
+        reading_list = generate_daily_reading_list(
+            session, local_today(), user_id=user_id, regenerate=False
+        )
     return reading_list
 
 

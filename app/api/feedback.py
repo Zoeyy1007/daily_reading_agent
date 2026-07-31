@@ -5,13 +5,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.dependencies import get_current_user_id
+from app.config import get_settings
 from app.db.models import FeedbackEvent, PreferenceFeature, SavedArticle
 from app.db.session import get_db
 from app.schemas.feedback import (
     FeedbackCreate,
     FeedbackRead,
     PreferenceFeatureRead,
+    PreferenceImpactRead,
     SavedArticleRead,
+    ScoringComponentWeights,
+    ScoringProfileRead,
 )
 from app.services.feedback_service import record_feedback
 
@@ -88,4 +92,50 @@ def list_derived_preferences(
                 PreferenceFeature.score.desc(),
             )
         )
+    )
+
+
+@router.get("/preferences/scoring", response_model=ScoringProfileRead)
+def get_scoring_profile(
+    session: DBSession,
+    user_id: CurrentUserID,
+) -> ScoringProfileRead:
+    settings = get_settings()
+    preferences = list(
+        session.scalars(
+            select(PreferenceFeature)
+            .where(PreferenceFeature.user_id == user_id)
+            .order_by(
+                PreferenceFeature.confidence.desc(),
+                PreferenceFeature.score.desc(),
+            )
+        )
+    )
+    return ScoringProfileRead(
+        formula=(
+            "total = freshness + configured topics + preferred sources + "
+            "length fit + learned personalization"
+        ),
+        component_weights=ScoringComponentWeights(
+            freshness=40.0,
+            configured_topics=30.0,
+            preferred_sources=20.0,
+            length_fit=10.0,
+            personalization_max_adjustment=settings.personalization_weight,
+        ),
+        preference_impacts=[
+            PreferenceImpactRead(
+                feature_type=item.feature_type,
+                feature_value=item.feature_value,
+                score=item.score,
+                confidence=item.confidence,
+                positive_count=item.positive_count,
+                negative_count=item.negative_count,
+                potential_adjustment=round(
+                    item.score * item.confidence * settings.personalization_weight,
+                    2,
+                ),
+            )
+            for item in preferences
+        ],
     )

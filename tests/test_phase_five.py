@@ -78,6 +78,32 @@ def test_structured_outputs_reject_unknown_fields_and_bad_confidence() -> None:
     assert claim.attribution is None
 
 
+@pytest.mark.parametrize(
+    ("provider_value", "is_news", "expected"),
+    [
+        ("news report", True, "news"),
+        ("explainer", False, "analysis"),
+        ("editorial", False, "opinion"),
+        ("how-to", False, "tutorial"),
+        ("politics", True, "news"),
+        ("uncategorized-format", False, "other"),
+    ],
+)
+def test_classification_content_type_is_normalized(
+    provider_value: str, is_news: bool, expected: str
+) -> None:
+    result = ClassificationResult.model_validate(
+        {
+            "content_type": provider_value,
+            "is_news": is_news,
+            "topics": ["politics"],
+            "confidence": 0.8,
+        }
+    )
+
+    assert result.content_type == expected
+
+
 def test_evidence_output_is_relational_not_json_blob() -> None:
     output = EvidenceComparisonResult(
         links=[

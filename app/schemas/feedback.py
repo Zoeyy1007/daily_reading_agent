@@ -43,3 +43,27 @@ class PreferenceFeatureRead(BaseModel):
     positive_count: int
     negative_count: int
     updated_at: datetime
+
+
+class ScoringComponentWeights(BaseModel):
+    freshness: float
+    configured_topics: float
+    preferred_sources: float
+    length_fit: float
+    personalization_max_adjustment: float
+
+
+class PreferenceImpactRead(BaseModel):
+    feature_type: str
+    feature_value: str
+    score: float
+    confidence: float
+    positive_count: int
+    negative_count: int
+    potential_adjustment: float
+
+
+class ScoringProfileRead(BaseModel):
+    formula: str
+    component_weights: ScoringComponentWeights
+    preference_impacts: list[PreferenceImpactRead]

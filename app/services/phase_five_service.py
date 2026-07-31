@@ -12,6 +12,7 @@ from app.ai.factory import build_model_providers
 from app.ai.providers import ModelProviders, ProviderResult
 from app.ai.schemas import EvidenceClaimInput, EvidenceLinkResult, EvidencePairInput
 from app.config import Settings
+from app.db.session import SessionLocal
 from app.db.models import (
     Article,
     ArticleAIClassification,
@@ -26,6 +27,7 @@ from app.db.models import (
     StoryCluster,
     StoryClusterMember,
 )
+from app.utils.concurrency import bounded_to_thread_map
 
 WORD_PATTERN = re.compile(r"\S+")
 TERM_PATTERN = re.compile(r"[a-z0-9]+")
@@ -1312,6 +1314,140 @@ def extend_selected_evidence_retention(
             {StoryCluster.expires_at: expires_at}, synchronize_session=False
         )
     session.commit()
+
+
+async def classify_articles_with_model_async(
+    article_ids: list[int],
+    *,
+    run_id: int,
+    settings: Settings,
+    providers: ModelProviders | None = None,
+) -> int:
+    """Classify independent articles concurrently with isolated sessions."""
+    work = list(dict.fromkeys(article_ids))[: settings.phase_five_max_articles]
+
+    def classify_one(article_id: int) -> int:
+        with SessionLocal() as worker_session:
+            return classify_articles_with_model(
+                worker_session,
+                [article_id],
+                run_id=run_id,
+                settings=settings,
+                providers=providers,
+            )
+
+    counts = await bounded_to_thread_map(
+        work, classify_one, max_concurrency=settings.llm_max_concurrency
+    )
+    return sum(counts)
+
+
+async def embed_articles_async(
+    article_ids: list[int],
+    *,
+    run_id: int,
+    settings: Settings,
+    providers: ModelProviders | None = None,
+) -> int:
+    """Embed independent article batches concurrently with isolated sessions."""
+    work = list(dict.fromkeys(article_ids))[: settings.phase_five_max_articles]
+    batches = [
+        work[start : start + settings.embedding_batch_size]
+        for start in range(0, len(work), settings.embedding_batch_size)
+    ]
+
+    def embed_batch(batch: list[int]) -> int:
+        with SessionLocal() as worker_session:
+            return embed_articles(
+                worker_session,
+                batch,
+                run_id=run_id,
+                settings=settings,
+                providers=providers,
+            )
+
+    counts = await bounded_to_thread_map(
+        batches, embed_batch, max_concurrency=settings.embedding_max_concurrency
+    )
+    return sum(counts)
+
+
+async def embed_chunks_async(
+    cluster_ids: list[int],
+    *,
+    run_id: int,
+    settings: Settings,
+    providers: ModelProviders | None = None,
+) -> int:
+    """Embed chunks from distinct clusters concurrently."""
+    work = list(dict.fromkeys(cluster_ids))
+
+    def embed_cluster(cluster_id: int) -> int:
+        with SessionLocal() as worker_session:
+            return embed_chunks(
+                worker_session,
+                [cluster_id],
+                run_id=run_id,
+                settings=settings,
+                providers=providers,
+            )
+
+    counts = await bounded_to_thread_map(
+        work, embed_cluster, max_concurrency=settings.embedding_max_concurrency
+    )
+    return sum(counts)
+
+
+async def extract_cluster_claims_async(
+    cluster_ids: list[int],
+    *,
+    run_id: int,
+    settings: Settings,
+    providers: ModelProviders | None = None,
+) -> int:
+    """Extract claims for distinct clusters concurrently."""
+    work = list(dict.fromkeys(cluster_ids))
+
+    def extract_cluster(cluster_id: int) -> int:
+        with SessionLocal() as worker_session:
+            return extract_cluster_claims(
+                worker_session,
+                [cluster_id],
+                run_id=run_id,
+                settings=settings,
+                providers=providers,
+            )
+
+    counts = await bounded_to_thread_map(
+        work, extract_cluster, max_concurrency=settings.llm_max_concurrency
+    )
+    return sum(counts)
+
+
+async def compare_cluster_evidence_async(
+    cluster_ids: list[int],
+    *,
+    run_id: int,
+    settings: Settings,
+    providers: ModelProviders | None = None,
+) -> int:
+    """Compare evidence for distinct clusters concurrently."""
+    work = list(dict.fromkeys(cluster_ids))
+
+    def compare_cluster(cluster_id: int) -> int:
+        with SessionLocal() as worker_session:
+            return compare_cluster_evidence(
+                worker_session,
+                [cluster_id],
+                run_id=run_id,
+                settings=settings,
+                providers=providers,
+            )
+
+    counts = await bounded_to_thread_map(
+        work, compare_cluster, max_concurrency=settings.llm_max_concurrency
+    )
+    return sum(counts)
 
 
 def cleanup_expired_evidence(session: Session, *, now: datetime | None = None) -> int:

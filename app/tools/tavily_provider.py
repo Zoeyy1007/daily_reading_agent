@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 import logging
 from time import perf_counter
 from urllib.parse import urlparse
@@ -77,7 +77,13 @@ class TavilySearchProvider:
         return data
 
     def search(
-        self, *, query: str, allowed_domains: set[str], max_results: int
+        self,
+        *,
+        query: str,
+        allowed_domains: set[str],
+        max_results: int,
+        start_date: date | None,
+        end_date: date | None,
     ) -> list[SearchHit]:
         payload: dict[str, object] = {
             "query": query,
@@ -91,6 +97,10 @@ class TavilySearchProvider:
             payload["search_depth"] = self.search_depth
         if allowed_domains:
             payload["include_domains"] = sorted(allowed_domains)
+        if start_date is not None:
+            payload["start_date"] = start_date.isoformat()
+        if end_date is not None:
+            payload["end_date"] = end_date.isoformat()
 
         data = self._post("search", payload)
         results = data.get("results")

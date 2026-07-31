@@ -21,6 +21,7 @@ class DailyRunState(TypedDict, total=False):
     list_date: str
     regenerate: bool
     target_article_count: int
+    target_article_reading_minutes: int
     target_reading_minutes: int
     expansion_round: int
     max_expansion_rounds: int

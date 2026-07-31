@@ -39,18 +39,34 @@ def _source_score(article: object, settings: Settings) -> float:
     return 20.0 if getattr(article, "source_id", None) in settings.preferred_source_id_set else 5.0
 
 
-def _length_score(article: object, settings: Settings) -> float:
+def _length_score(
+    article: object,
+    settings: Settings,
+    expected_reading_minutes: int | None,
+) -> float:
     word_count = int(getattr(article, "word_count"))
-    ideal = (settings.min_article_words + settings.max_article_words) / 2
-    half_range = max(1.0, (settings.max_article_words - settings.min_article_words) / 2)
+    if expected_reading_minutes is not None:
+        ideal = expected_reading_minutes * settings.reading_words_per_minute
+        half_range = max(1.0, ideal)
+    else:
+        ideal = (settings.min_article_words + settings.max_article_words) / 2
+        half_range = max(
+            1.0, (settings.max_article_words - settings.min_article_words) / 2
+        )
     return max(0.0, 10.0 * (1.0 - abs(word_count - ideal) / half_range))
 
 
-def score_article(article: object, settings: Settings, *, now: datetime) -> ScoreResult:
+def score_article(
+    article: object,
+    settings: Settings,
+    *,
+    now: datetime,
+    expected_reading_minutes: int | None = None,
+) -> ScoreResult:
     freshness = _freshness_score(article, settings, now)
     topic, matched_topics = _topic_score(article, settings)
     source = _source_score(article, settings)
-    length = _length_score(article, settings)
+    length = _length_score(article, settings, expected_reading_minutes)
     total = freshness + topic + source + length
 
     reason_parts = [f"freshness {freshness:.1f}/40", f"length fit {length:.1f}/10"]

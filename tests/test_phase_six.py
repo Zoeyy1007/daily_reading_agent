@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 from pydantic import ValidationError
 
@@ -15,10 +17,15 @@ from app.ai.schemas import (
     SupplementStatementDraft,
     SupplementStatementVerification,
     SupplementVerification,
+    WebSearchToolCall,
 )
 from app.config import Settings
 from app.agent.tool_policy import load_supplement_tool_policy
-from app.agent.tool_executor import ToolCallRejected, extract_tool_pair
+from app.agent.tool_executor import (
+    ToolCallRejected,
+    build_search_query,
+    extract_tool_pair,
+)
 from app.services.supplement_service import (
     MAX_EVIDENCE_PER_COVERAGE_AREA,
     _coverage_research_complete,
@@ -162,6 +169,25 @@ def _coverage() -> SupplementCoverageAssessment:
     )
 
 
+def _search_arguments(
+    *,
+    purpose: str = "earlier_events_and_timeline",
+    preferred_domains: list[str] | None = None,
+) -> SearchToolArguments:
+    return SearchToolArguments.model_validate(
+        {
+            "purpose": purpose,
+            "event": "Federal vehicle emissions rule",
+            "entities": ["Environmental Protection Agency"],
+            "keywords": ["vehicle emissions", "final rule"],
+            "start_date": date(2025, 1, 1),
+            "end_date": date(2026, 7, 30),
+            "preferred_domains": preferred_domains or [],
+            "max_results": 5,
+        }
+    )
+
+
 def test_strict_plan_allows_one_search_followed_by_collect_chunk() -> None:
     plan = SupplementPlan(
         supplement_needed=True,
@@ -171,7 +197,7 @@ def test_strict_plan_allows_one_search_followed_by_collect_chunk() -> None:
             SearchLocalToolCall(
                 call_id="search-1",
                 name="search_local",
-                arguments=SearchToolArguments(query="earlier events and affected groups"),
+                arguments=_search_arguments(),
             ),
             CollectChunkToolCall(
                 call_id="collect-1",
@@ -190,6 +216,7 @@ def test_strict_plan_allows_one_search_followed_by_collect_chunk() -> None:
         plan,
         policy=policy,
         available_search_names={"search_local"},
+        allowed_purposes={"earlier_events_and_timeline"},
         call_counts={},
     )
     assert extracted.search_call.name == "search_local"
@@ -206,7 +233,7 @@ def test_strict_plan_rejects_search_without_collect_chunk() -> None:
                 SearchLocalToolCall(
                     call_id="search-1",
                     name="search_local",
-                    arguments=SearchToolArguments(query="earlier events"),
+                    arguments=_search_arguments(),
                 )
             ],
             reason="The article lacks context.",
@@ -222,7 +249,7 @@ def test_tool_extractor_rejects_unavailable_search() -> None:
             SearchLocalToolCall(
                 call_id="search-1",
                 name="search_local",
-                arguments=SearchToolArguments(query="earlier events"),
+                arguments=_search_arguments(),
             ),
             CollectChunkToolCall(
                 call_id="collect-1",
@@ -239,6 +266,7 @@ def test_tool_extractor_rejects_unavailable_search() -> None:
             plan,
             policy=load_supplement_tool_policy("config/supplement_tools.yaml"),
             available_search_names=set(),
+            allowed_purposes={"earlier_events_and_timeline"},
             call_counts={},
         )
 
@@ -278,7 +306,7 @@ def test_coverage_area_stops_at_three_distinct_relevant_chunks() -> None:
             SearchLocalToolCall(
                 call_id="search-2",
                 name="search_local",
-                arguments=SearchToolArguments(query="earlier timeline"),
+                arguments=_search_arguments(),
             ),
             CollectChunkToolCall(
                 call_id="collect-2",
@@ -386,12 +414,131 @@ def test_tavily_none_depth_omits_depth_and_returns_discovery_only(monkeypatch) -
         query="policy background",
         allowed_domains={"reuters.com"},
         max_results=3,
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 27),
     )
 
     assert "search_depth" not in captured
     assert captured["include_raw_content"] is False
+    assert captured["start_date"] == "2026-07-01"
+    assert captured["end_date"] == "2026-07-27"
     assert hits[0].url == "https://www.reuters.com/world/example"
     assert hits[0].snippet is not None
+
+
+def test_structured_search_builds_deterministic_query() -> None:
+    arguments = _search_arguments()
+
+    assert build_search_query(arguments) == (
+        "Federal vehicle emissions rule background timeline vehicle emissions "
+        "final rule Environmental Protection Agency"
+    )
+
+
+def test_structured_search_rejects_inverted_dates() -> None:
+    payload = _search_arguments().model_dump()
+    payload["start_date"] = date(2026, 8, 1)
+    payload["end_date"] = date(2026, 7, 1)
+
+    with pytest.raises(ValidationError, match="start_date"):
+        SearchToolArguments.model_validate(payload)
+
+
+def test_tool_extractor_rejects_purpose_without_active_gap() -> None:
+    plan = SupplementPlan(
+        supplement_needed=True,
+        coverage=_coverage(),
+        next_step="use_tools",
+        tool_calls=[
+            SearchLocalToolCall(
+                call_id="search-1",
+                name="search_local",
+                arguments=_search_arguments(),
+            ),
+            CollectChunkToolCall(
+                call_id="collect-1",
+                name="collect_chunk",
+                arguments=CollectChunkArguments(
+                    source_call_id="search-1", max_chunks=4
+                ),
+            ),
+        ],
+        reason="More context is needed.",
+    )
+
+    with pytest.raises(ToolCallRejected, match="coverage gap"):
+        extract_tool_pair(
+            plan,
+            policy=load_supplement_tool_policy("config/supplement_tools.yaml"),
+            available_search_names={"search_local"},
+            allowed_purposes={"affected_people_and_effects"},
+            call_counts={},
+        )
+
+
+def test_web_search_domains_are_policy_bounded_and_result_count_is_capped() -> None:
+    plan = SupplementPlan(
+        supplement_needed=True,
+        coverage=_coverage(),
+        next_step="use_tools",
+        tool_calls=[
+            WebSearchToolCall(
+                call_id="search-1",
+                name="web_search",
+                arguments=_search_arguments(preferred_domains=["reuters.com"]),
+            ),
+            CollectChunkToolCall(
+                call_id="collect-1",
+                name="collect_chunk",
+                arguments=CollectChunkArguments(
+                    source_call_id="search-1", max_chunks=8
+                ),
+            ),
+        ],
+        reason="External reporting may provide the missing context.",
+    )
+    extracted = extract_tool_pair(
+        plan,
+        policy=load_supplement_tool_policy("config/supplement_tools.yaml"),
+        available_search_names={"web_search"},
+        allowed_purposes={"earlier_events_and_timeline"},
+        call_counts={},
+    )
+
+    assert extracted.allowed_domains == frozenset({"reuters.com"})
+    assert extracted.result_limit == 3
+
+
+def test_web_search_rejects_domain_outside_yaml_policy() -> None:
+    plan = SupplementPlan(
+        supplement_needed=True,
+        coverage=_coverage(),
+        next_step="use_tools",
+        tool_calls=[
+            WebSearchToolCall(
+                call_id="search-1",
+                name="web_search",
+                arguments=_search_arguments(preferred_domains=["example.com"]),
+            ),
+            CollectChunkToolCall(
+                call_id="collect-1",
+                name="collect_chunk",
+                arguments=CollectChunkArguments(
+                    source_call_id="search-1", max_chunks=3
+                ),
+            ),
+        ],
+        reason="External reporting may provide the missing context.",
+    )
+
+    with pytest.raises(ToolCallRejected, match="outside policy"):
+        extract_tool_pair(
+            plan,
+            policy=load_supplement_tool_policy("config/supplement_tools.yaml"),
+            available_search_names={"web_search"},
+            allowed_purposes={"earlier_events_and_timeline"},
+            call_counts={},
+        )
 
 
 def test_verification_requires_exact_types_and_all_fields() -> None:

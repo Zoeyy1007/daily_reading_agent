@@ -68,6 +68,7 @@ def _eligible_candidates(
     settings: Settings,
     now: datetime,
     user_id: int,
+    expected_reading_minutes: int,
 ) -> list[ScoredCandidate]:
     with timed_stage(logger, "daily.query_candidates", user_id=user_id):
         articles = list(
@@ -104,7 +105,12 @@ def _eligible_candidates(
             candidates.append(
                 ScoredCandidate(
                     article=article,
-                    base_score=score_article(article, settings, now=now),
+                    base_score=score_article(
+                        article,
+                        settings,
+                        now=now,
+                        expected_reading_minutes=expected_reading_minutes,
+                    ),
                     personalization=score_personalization(
                         features_by_article[article.id],
                         preferences_by_feature,
@@ -143,8 +149,12 @@ def generate_daily_reading_list(
         list_date=list_date,
         regenerate=regenerate,
     ):
-        if session.get(User, user_id) is None:
+        user = session.get(User, user_id)
+        if user is None:
             raise LookupError(f"User {user_id} does not exist")
+        target_count = user.daily_list_length
+        target_article_minutes = user.expected_reading_minutes_per_article
+        target_total_minutes = target_count * target_article_minutes
         existing = get_daily_reading_list(session, list_date, user_id)
         if existing and not regenerate:
             return existing
@@ -153,15 +163,15 @@ def generate_daily_reading_list(
             reading_list = existing
             reading_list.items.clear()
             session.flush()
-            reading_list.target_article_count = current_settings.daily_article_target
-            reading_list.target_reading_minutes = current_settings.daily_reading_minutes
+            reading_list.target_article_count = target_count
+            reading_list.target_reading_minutes = target_total_minutes
             reading_list.status = DailyReadingStatus.BUILDING.value
         else:
             reading_list = DailyReadingList(
                 user_id=user_id,
                 list_date=list_date,
-                target_article_count=current_settings.daily_article_target,
-                target_reading_minutes=current_settings.daily_reading_minutes,
+                target_article_count=target_count,
+                target_reading_minutes=target_total_minutes,
                 actual_article_count=0,
                 actual_reading_minutes=0,
                 status=DailyReadingStatus.BUILDING.value,
@@ -172,14 +182,18 @@ def generate_daily_reading_list(
             selected: list[ScoredCandidate] = []
             total_minutes = 0
             candidates = _eligible_candidates(
-                session, current_settings, current_time, user_id
+                session,
+                current_settings,
+                current_time,
+                user_id,
+                target_article_minutes,
             )
             for candidate in candidates:
-                if len(selected) >= current_settings.daily_article_target:
+                if len(selected) >= target_count:
                     break
                 if (
                     total_minutes + candidate.reading_minutes
-                    > current_settings.daily_reading_minutes
+                    > target_total_minutes
                 ):
                     continue
                 selected.append(candidate)

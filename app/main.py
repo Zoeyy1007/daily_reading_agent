@@ -11,7 +11,9 @@ from sqlalchemy import text
 
 from app.api import (
     agent_runs,
+    analytics,
     articles,
+    auth,
     daily_reading,
     evidence,
     feedback,
@@ -46,6 +48,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title=get_settings().app_name, lifespan=lifespan)
+app.include_router(auth.router)
+app.include_router(analytics.router)
 app.include_router(sources.router)
 app.include_router(publishers.router)
 app.include_router(articles.router)

@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="/static/styles.css" />
     <script src="/static/app.js" defer></script>
   </head>
-  <body>
+  <body class="auth-pending">
     <header class="topbar">
       <button
         id="menu-button"
@@ -46,7 +46,24 @@
           </svg>
           Saved
         </a>
+        <a class="drawer-link" href="#/scoring" data-route="scoring">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M4 19V9m6 10V5m6 14v-7m4 7H2" />
+          </svg>
+          Scoring System
+        </a>
+        <a class="drawer-link" href="#/settings" data-route="settings">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 9a7 7 0 0 0-14 0" />
+          </svg>
+          User Settings
+        </a>
       </nav>
+      <div id="drawer-account" class="drawer-account" hidden>
+        <div class="drawer-heading">Account</div>
+        <div id="account-name" class="account-name"></div>
+        <button id="logout-button" class="drawer-logout" type="button">Log out</button>
+      </div>
     </aside>
 
     <main id="app" tabindex="-1">

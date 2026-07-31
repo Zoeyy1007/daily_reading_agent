@@ -3,7 +3,7 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from time import perf_counter
 
 from sqlalchemy import select
@@ -16,6 +16,7 @@ from app.ai.schemas import SupplementDraft, SupplementPlan, SupplementVerificati
 from app.agent.tool_executor import ToolCallRejected, extract_tool_pair
 from app.agent.tool_policy import ToolPolicy, SupplementToolPolicy, load_supplement_tool_policy
 from app.config import Settings
+from app.db.session import SessionLocal
 from app.db.models import (
     Article,
     ArticleAIClassification,
@@ -40,6 +41,7 @@ from app.tools.supplement_search import (
     local_cluster_search,
 )
 from app.tools.tavily_provider import TavilyExtractFetcher, TavilySearchProvider
+from app.utils.concurrency import bounded_to_thread_map
 
 logger = logging.getLogger("daily_reading.supplements")
 
@@ -299,10 +301,12 @@ def _save_local_evidence(
     run: SupplementRun,
     selected_article_id: int,
     query: str,
+    start_date: date | None,
+    end_date: date | None,
     settings: Settings,
     tool: ToolPolicy,
     collector: ToolPolicy,
-    max_chunks: int,
+    result_limit: int,
 ) -> int:
     if (
         not tool.enabled
@@ -312,14 +316,15 @@ def _save_local_evidence(
         or "local_article" not in collector.permissions.allowed_source_types
     ):
         return 0
-    limit = min(tool.max_results, collector.max_results, max_chunks)
     _cluster_id, matches = local_cluster_search(
         session,
         selected_article_id=selected_article_id,
         query=query,
         settings=settings,
-        limit=limit,
+        limit=result_limit,
         allowed_relationships=set(tool.permissions.allowed_relationships),
+        start_date=start_date,
+        end_date=end_date,
     )
     existing = {item.content_hash for item in run.evidence_items}
     added = 0
@@ -366,6 +371,8 @@ def _save_external_evidence(
     *,
     run: SupplementRun,
     query: str,
+    start_date: date | None,
+    end_date: date | None,
     source_type: str,
     allowed_domains: set[str],
     settings: Settings,
@@ -373,7 +380,7 @@ def _save_external_evidence(
     document_fetcher: DocumentFetcher,
     tool: ToolPolicy,
     collector: ToolPolicy,
-    max_chunks: int,
+    result_limit: int,
 ) -> int:
     if (
         search_provider is None
@@ -385,11 +392,12 @@ def _save_external_evidence(
         or source_type not in collector.permissions.allowed_source_types
     ):
         return 0
-    result_limit = min(tool.max_results, collector.max_results, max_chunks)
     hits = search_provider.search(
         query=query,
         allowed_domains=allowed_domains,
         max_results=result_limit,
+        start_date=start_date,
+        end_date=end_date,
     )
     existing = {item.content_hash for item in run.evidence_items}
     added = 0
@@ -841,6 +849,15 @@ def generate_supplement_for_item(
                     plan,
                     policy=policy,
                     available_search_names=set(available_search_names),
+                    allowed_purposes={
+                        name
+                        for name, target in _coverage_target_payload(
+                            target_gaps=target_gaps,
+                            evidence_by_area=evidence_by_area,
+                            satisfied_areas=satisfied_areas,
+                        ).items()
+                        if target["status"] == "search_needed"
+                    },
                     call_counts=tool_calls,
                 )
             except ToolCallRejected as exc:
@@ -863,12 +880,11 @@ def generate_supplement_for_item(
                 continue
 
             search_call = extracted.search_call
-            collect_call = extracted.collect_call
             search_name = search_call.name
             search_tool = extracted.search_policy
             collector = extracted.collect_policy
-            query = search_call.arguments.query.strip()
-            max_chunks = collect_call.arguments.max_chunks
+            search_arguments = search_call.arguments
+            query = extracted.query
             before_ids = {item.id for item in run.evidence_items}
             tool_calls[search_name] += 1
             tool_calls["collect_chunk"] += 1
@@ -876,12 +892,17 @@ def generate_supplement_for_item(
             tool_started = perf_counter()
             logger.info(
                 "supplement stage=tool_call status=start item_id=%s iteration=%s "
-                "tool=%s query_hash=%s max_chunks=%s",
+                "tool=%s purpose=%s query_hash=%s result_limit=%s domains=%s "
+                "start_date=%s end_date=%s",
                 item_id,
                 iteration,
                 search_name,
+                search_arguments.purpose,
                 _fingerprint(query)[:12],
-                max_chunks,
+                extracted.result_limit,
+                len(extracted.allowed_domains),
+                search_arguments.start_date,
+                search_arguments.end_date,
             )
             if search_name == "search_local":
                 added = _save_local_evidence(
@@ -889,38 +910,44 @@ def generate_supplement_for_item(
                     run=run,
                     selected_article_id=article.id,
                     query=query,
+                    start_date=search_arguments.start_date,
+                    end_date=search_arguments.end_date,
                     settings=settings,
                     tool=search_tool,
                     collector=collector,
-                    max_chunks=max_chunks,
+                    result_limit=extracted.result_limit,
                 )
             elif search_name == "web_search":
                 added = _save_external_evidence(
                     session,
                     run=run,
                     query=query,
+                    start_date=search_arguments.start_date,
+                    end_date=search_arguments.end_date,
                     source_type="web",
-                    allowed_domains=search_tool.permissions.allowed_domain_set,
+                    allowed_domains=set(extracted.allowed_domains),
                     settings=settings,
                     search_provider=search_provider,
                     document_fetcher=fetcher,
                     tool=search_tool,
                     collector=collector,
-                    max_chunks=max_chunks,
+                    result_limit=extracted.result_limit,
                 )
             else:
                 added = _save_external_evidence(
                     session,
                     run=run,
                     query=query,
+                    start_date=search_arguments.start_date,
+                    end_date=search_arguments.end_date,
                     source_type="government",
-                    allowed_domains=search_tool.permissions.allowed_domain_set,
+                    allowed_domains=set(extracted.allowed_domains),
                     settings=settings,
                     search_provider=search_provider,
                     document_fetcher=fetcher,
                     tool=search_tool,
                     collector=collector,
-                    max_chunks=max_chunks,
+                    result_limit=extracted.result_limit,
                 )
             session.commit()
             session.refresh(run)
@@ -1198,4 +1225,72 @@ def generate_supplements_for_list(
                 item.id,
                 daily_run_id,
             )
+    return SupplementBatchStats(**counts)
+
+
+async def generate_supplements_for_list_async(
+    session: Session,
+    reading_list_id: int,
+    *,
+    daily_run_id: int | None,
+    settings: Settings,
+    provider: SupplementProvider | None = None,
+    search_provider: ExternalSearchProvider | None = None,
+    document_fetcher: DocumentFetcher | None = None,
+    tool_policy: SupplementToolPolicy | None = None,
+) -> SupplementBatchStats:
+    """Generate distinct reading-list items concurrently with isolated sessions.
+
+    The planning/tool/composition loop inside one item remains ordered. This
+    prevents an LLM iteration from reading evidence while another tool call is
+    still writing that same supplement run.
+    """
+    reading_list = session.scalar(
+        select(DailyReadingList)
+        .where(DailyReadingList.id == reading_list_id)
+        .options(selectinload(DailyReadingList.items))
+    )
+    if reading_list is None:
+        raise LookupError("Daily reading list not found")
+    item_ids = [item.id for item in reading_list.items]
+
+    def generate_one(item_id: int) -> tuple[str, int, int]:
+        with SessionLocal() as worker_session:
+            try:
+                run = generate_supplement_for_item(
+                    worker_session,
+                    item_id,
+                    daily_run_id=daily_run_id,
+                    settings=settings,
+                    provider=provider,
+                    search_provider=search_provider,
+                    document_fetcher=document_fetcher,
+                    tool_policy=tool_policy,
+                )
+                return run.status, len(run.evidence_items), len(run.cards)
+            except Exception:
+                logger.exception(
+                    "supplement generation failed item_id=%s daily_run_id=%s",
+                    item_id,
+                    daily_run_id,
+                )
+                return "failed", 0, 0
+
+    results = await bounded_to_thread_map(
+        item_ids,
+        generate_one,
+        max_concurrency=settings.supplement_max_concurrency,
+    )
+    counts = {
+        "complete": 0,
+        "skipped": 0,
+        "insufficient": 0,
+        "failed": 0,
+        "evidence_items": 0,
+        "cards": 0,
+    }
+    for status, evidence_count, card_count in results:
+        counts[status] += 1
+        counts["evidence_items"] += evidence_count
+        counts["cards"] += card_count
     return SupplementBatchStats(**counts)

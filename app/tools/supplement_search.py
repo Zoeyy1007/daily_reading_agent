@@ -2,7 +2,7 @@ import hashlib
 import io
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -75,7 +75,13 @@ class ExternalSearchProvider(Protocol):
     provider_name: str
 
     def search(
-        self, *, query: str, allowed_domains: set[str], max_results: int
+        self,
+        *,
+        query: str,
+        allowed_domains: set[str],
+        max_results: int,
+        start_date: date | None,
+        end_date: date | None,
     ) -> list[SearchHit]: ...
 
 
@@ -113,6 +119,8 @@ def local_cluster_search(
     settings: Settings,
     limit: int,
     allowed_relationships: set[str],
+    start_date: date | None,
+    end_date: date | None,
 ) -> tuple[int | None, list[LocalSearchMatch]]:
     if not allowed_relationships:
         return None, []
@@ -124,7 +132,7 @@ def local_cluster_search(
     if cluster is None:
         return None, []
 
-    rows = session.execute(
+    query_statement = (
         select(ArticleChunk, Article, Publisher, StoryClusterMember.relationship)
         .join(Article, Article.id == ArticleChunk.article_id)
         .join(Source, Source.id == Article.source_id)
@@ -140,7 +148,17 @@ def local_cluster_search(
             Article.id,
             ArticleChunk.chunk_index,
         )
-    ).all()
+    )
+    if start_date is not None:
+        query_statement = query_statement.where(
+            Article.published_at >= datetime.combine(start_date, time.min, tzinfo=UTC)
+        )
+    if end_date is not None:
+        query_statement = query_statement.where(
+            Article.published_at
+            < datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=UTC)
+        )
+    rows = session.execute(query_statement).all()
     if not rows:
         return cluster.id, []
 

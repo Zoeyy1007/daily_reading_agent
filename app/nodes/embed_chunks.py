@@ -2,16 +2,15 @@ from sqlalchemy.orm import Session
 
 from app.agent.state import DailyRunState
 from app.config import Settings
-from app.services.phase_five_service import embed_chunks
+from app.services.phase_five_service import embed_chunks_async
 
 
-def embed_chunks_node(
-    state: DailyRunState, session: Session, settings: Settings
+async def embed_chunks_node(
+    state: DailyRunState, _session: Session, settings: Settings
 ) -> dict[str, object]:
     if not settings.phase_five_enabled:
         return {}
-    count = embed_chunks(
-        session,
+    count = await embed_chunks_async(
         state.get("evidence_cluster_ids", []),
         run_id=state["run_id"],
         settings=settings,

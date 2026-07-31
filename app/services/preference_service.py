@@ -4,7 +4,14 @@ from dataclasses import dataclass
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.db.models import ArticleFeature, FeedbackEvent, FeedbackEventType, PreferenceFeature
+from app.db.models import (
+    ArticleFeature,
+    ArticleFeatureType,
+    FeedbackEvent,
+    FeedbackEventType,
+    FeedbackReason,
+    PreferenceFeature,
+)
 
 
 EVENT_WEIGHTS: dict[str, float] = {
@@ -14,6 +21,19 @@ EVENT_WEIGHTS: dict[str, float] = {
     FeedbackEventType.OPEN.value: 0.1,
     FeedbackEventType.COMPLETE.value: 0.5,
     FeedbackEventType.STAR.value: 1.5,
+}
+
+TOPIC_REASON_VALUES: dict[str, str] = {
+    FeedbackReason.TOPIC_TECHNOLOGY.value: "technology",
+    FeedbackReason.TOPIC_ARTIFICIAL_INTELLIGENCE.value: "artificial intelligence",
+    FeedbackReason.TOPIC_SCIENCE.value: "science",
+    FeedbackReason.TOPIC_BUSINESS.value: "business",
+    FeedbackReason.TOPIC_POLITICS.value: "politics",
+    FeedbackReason.TOPIC_HEALTH.value: "health",
+    FeedbackReason.TOPIC_CLIMATE.value: "climate",
+    FeedbackReason.TOPIC_SPORTS.value: "sports",
+    FeedbackReason.TOPIC_CULTURE.value: "culture",
+    FeedbackReason.TOPIC_CRIME.value: "crime",
 }
 
 
@@ -48,6 +68,20 @@ def _current_feedback(events: list[FeedbackEvent]) -> list[FeedbackEvent]:
     ]
 
 
+def feedback_feature_values(
+    event: FeedbackEvent,
+    article_features: list[ArticleFeature],
+) -> list[tuple[str, str, float]]:
+    """Return the features changed by one feedback event."""
+    explicit_topic = TOPIC_REASON_VALUES.get(event.reason or "")
+    if explicit_topic:
+        return [(ArticleFeatureType.TOPIC.value, explicit_topic, 1.0)]
+    return [
+        (feature.feature_type, feature.feature_value, feature.confidence)
+        for feature in article_features
+    ]
+
+
 def rebuild_preference_features(
     session: Session,
     user_id: int,
@@ -77,9 +111,12 @@ def rebuild_preference_features(
         weight = EVENT_WEIGHTS.get(event.event_type, 0.0)
         if weight == 0:
             continue
-        for feature in features_by_article[event.article_id]:
-            adjusted = weight * feature.confidence
-            accumulator = accumulators[(feature.feature_type, feature.feature_value)]
+        event_features = feedback_feature_values(
+            event, features_by_article[event.article_id]
+        )
+        for feature_type, feature_value, feature_confidence in event_features:
+            adjusted = weight * feature_confidence
+            accumulator = accumulators[(feature_type, feature_value)]
             if adjusted > 0:
                 accumulator.positive_weight += adjusted
                 accumulator.positive_count += 1

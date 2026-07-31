@@ -88,9 +88,68 @@ class SupplementToolPolicy(BaseModel):
                 input_schema = {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["query"],
+                    "required": [
+                        "purpose",
+                        "event",
+                        "entities",
+                        "keywords",
+                        "start_date",
+                        "end_date",
+                        "preferred_domains",
+                        "max_results",
+                    ],
                     "properties": {
-                        "query": {"type": "string", "minLength": 3, "maxLength": 500}
+                        "purpose": {
+                            "type": "string",
+                            "enum": [
+                                "earlier_events_and_timeline",
+                                "affected_people_and_effects",
+                                "missing_information_from_other_reporting",
+                                "disagreement_or_uncertainty",
+                            ],
+                        },
+                        "event": {
+                            "type": "string",
+                            "minLength": 3,
+                            "maxLength": 240,
+                        },
+                        "entities": {
+                            "type": "array",
+                            "maxItems": 8,
+                            "items": {"type": "string", "maxLength": 100},
+                        },
+                        "keywords": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 10,
+                            "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100,
+                            },
+                        },
+                        "start_date": {
+                            "anyOf": [
+                                {"type": "string", "format": "date"},
+                                {"type": "null"},
+                            ]
+                        },
+                        "end_date": {
+                            "anyOf": [
+                                {"type": "string", "format": "date"},
+                                {"type": "null"},
+                            ]
+                        },
+                        "preferred_domains": {
+                            "type": "array",
+                            "maxItems": 8,
+                            "items": {"type": "string"},
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": min(8, tool.max_results),
+                        },
                     },
                 }
             definitions.append(

@@ -10,11 +10,15 @@ from app.db.models import User
 def load_settings_node(
     state: DailyRunState, session: Session, settings: Settings
 ) -> dict[str, object]:
-    if session.get(User, state["user_id"]) is None:
+    user = session.get(User, state["user_id"])
+    if user is None:
         raise LookupError(f"User {state['user_id']} does not exist")
+    target_count = user.daily_list_length
+    target_article_minutes = user.expected_reading_minutes_per_article
     return {
-        "target_article_count": settings.daily_article_target,
-        "target_reading_minutes": settings.daily_reading_minutes,
+        "target_article_count": target_count,
+        "target_article_reading_minutes": target_article_minutes,
+        "target_reading_minutes": target_count * target_article_minutes,
         "max_expansion_rounds": state.get(
             "max_expansion_rounds", settings.agent_max_expansion_rounds
         ),

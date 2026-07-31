@@ -2,10 +2,10 @@ from sqlalchemy.orm import Session
 
 from app.agent.state import DailyRunState
 from app.config import Settings
-from app.services.supplement_service import generate_supplements_for_list
+from app.services.supplement_service import generate_supplements_for_list_async
 
 
-def supplement_node(
+async def supplement_node(
     state: DailyRunState, session: Session, settings: Settings
 ) -> dict[str, object]:
     reading_list_id = state.get("reading_list_id")
@@ -16,7 +16,7 @@ def supplement_node(
                 "supplements": "disabled" if not settings.phase_six_enabled else "no_list",
             }
         }
-    result = generate_supplements_for_list(
+    result = await generate_supplements_for_list_async(
         session,
         reading_list_id,
         daily_run_id=state["run_id"],

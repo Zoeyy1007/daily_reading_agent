@@ -40,8 +40,16 @@ class DeepSeekClassificationProvider:
         return self.client.structured_chat(
             model=self.model,
             system_prompt=(
-                "Classify a reading article. Use only information in the supplied text. "
-                "Return concise JSON and no commentary."
+                "Classify a reading article using only the supplied text. content_type MUST "
+                "be exactly one of these five lowercase values: news, analysis, opinion, "
+                "tutorial, other. Apply them in this decision order: tutorial for primarily "
+                "instructional step-by-step content; opinion for primarily argumentative or "
+                "editorial content; analysis for interpretation or explanation beyond direct "
+                "reporting; news for factual reporting about events or developments; other "
+                "ONLY when none of the previous four categories applies. Subject areas such "
+                "as politics, technology, crime, business, science, and health belong in the "
+                "topics array and MUST NOT be used as content_type. Return concise JSON "
+                "matching the required schema and no commentary."
             ),
             user_prompt=f"Title: {title}\n\nArticle:\n{content[:16000]}",
             output_model=ClassificationResult,
@@ -187,9 +195,15 @@ class DeepSeekSupplementProvider:
                 "strong source may satisfy an area before it reaches three items. For a "
                 "tool step, return exactly two calls: one available search tool followed by "
                 "collect_chunk whose source_call_id references the search call. Prefer "
-                "search_local before external search. After tool results, choose another tool "
-                "step, compose, or stop. You are not a factual source and must never provide "
-                "missing facts yourself."
+                "search_local before external search. Search arguments are a structured research "
+                "request, not a free-form query: purpose must be one currently search-needed "
+                "coverage area; event must identify the concrete event in this article; entities "
+                "and keywords must be derived from this article and that gap. Use null dates when "
+                "a date boundary is not justified. preferred_domains may only narrow the domains "
+                "shown by the selected tool and must be empty for search_local. Request only the "
+                "number of results reasonably needed. Every search argument field is mandatory. "
+                "After tool results, choose another tool step, compose, or stop. You are not a "
+                "factual source and must never provide missing facts yourself."
             ),
             user_prompt=json.dumps(payload, ensure_ascii=False),
             output_model=SupplementPlan,

@@ -6,12 +6,17 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_current_user_id
 from app.db.models import Publisher, Source
 from app.db.session import get_db
 from app.schemas.source import IngestionResult, SourceCreate, SourceRead, SourceUpdate
 from app.services.ingestion_service import ingest_source
 
-router = APIRouter(prefix="/sources", tags=["sources"])
+router = APIRouter(
+    prefix="/sources",
+    tags=["sources"],
+    dependencies=[Depends(get_current_user_id)],
+)
 DBSession = Annotated[Session, Depends(get_db)]
 
 

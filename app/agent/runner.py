@@ -1,12 +1,14 @@
+import asyncio
 import logging
 import os
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from sqlalchemy import text
 
 from app.agent.graph import build_daily_run_graph
@@ -32,6 +34,15 @@ def _checkpoint_database_url() -> str:
 def postgres_checkpointer() -> Iterator[PostgresSaver]:
     with PostgresSaver.from_conn_string(_checkpoint_database_url()) as saver:
         saver.setup()
+        yield saver
+
+
+@asynccontextmanager
+async def async_postgres_checkpointer() -> AsyncIterator[AsyncPostgresSaver]:
+    async with AsyncPostgresSaver.from_conn_string(
+        _checkpoint_database_url()
+    ) as saver:
+        await saver.setup()
         yield saver
 
 
@@ -82,27 +93,61 @@ def _config(thread_id: str) -> dict[str, Any]:
     }
 
 
+async def execute_agent_run_async(
+    run_id: int, *, regenerate: bool = True
+) -> DailyRunState:
+    def load() -> tuple[DailyRunState, str]:
+        with SessionLocal() as session:
+            run = session.get(DailyRun, run_id)
+            if run is None:
+                raise LookupError(f"Agent run {run_id} does not exist")
+            return initial_run_state(run, regenerate=regenerate), run.thread_id
+
+    state, thread_id = await asyncio.to_thread(load)
+    with claim_run(run_id):
+        async with async_postgres_checkpointer() as saver:
+            graph = build_daily_run_graph(checkpointer=saver)
+            return await graph.ainvoke(state, _config(thread_id))
+
+
+async def resume_agent_run_async(run_id: int) -> DailyRunState:
+    def load_thread_id() -> str:
+        with SessionLocal() as session:
+            run = session.get(DailyRun, run_id)
+            if run is None:
+                raise LookupError(f"Agent run {run_id} does not exist")
+            return run.thread_id
+
+    thread_id = await asyncio.to_thread(load_thread_id)
+    with claim_run(run_id):
+        async with async_postgres_checkpointer() as saver:
+            graph = build_daily_run_graph(checkpointer=saver)
+            snapshot = await graph.aget_state(_config(thread_id))
+            if not snapshot.values:
+                raise LookupError(f"Agent run {run_id} has no checkpoint to resume")
+            return await graph.ainvoke(None, _config(thread_id))
+
+
+def _run_coroutine(
+    coroutine_factory: Callable[[], Coroutine[object, object, DailyRunState]],
+) -> DailyRunState:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop_factory = asyncio.SelectorEventLoop if os.name == "nt" else None
+        with asyncio.Runner(loop_factory=loop_factory) as runner:
+            return runner.run(coroutine_factory())
+    raise RuntimeError(
+        "A synchronous agent runner cannot be called from an active event loop; "
+        "await execute_agent_run_async() or resume_agent_run_async() instead"
+    )
+
+
 def execute_agent_run(run_id: int, *, regenerate: bool = True) -> DailyRunState:
-    with SessionLocal() as session:
-        run = session.get(DailyRun, run_id)
-        if run is None:
-            raise LookupError(f"Agent run {run_id} does not exist")
-        state = initial_run_state(run, regenerate=regenerate)
-        thread_id = run.thread_id
-    with claim_run(run_id), postgres_checkpointer() as saver:
-        graph = build_daily_run_graph(checkpointer=saver)
-        return graph.invoke(state, _config(thread_id))
+    return _run_coroutine(
+        lambda: execute_agent_run_async(run_id, regenerate=regenerate)
+    )
 
 
 def resume_agent_run(run_id: int) -> DailyRunState:
-    with SessionLocal() as session:
-        run = session.get(DailyRun, run_id)
-        if run is None:
-            raise LookupError(f"Agent run {run_id} does not exist")
-        thread_id = run.thread_id
-    with claim_run(run_id), postgres_checkpointer() as saver:
-        graph = build_daily_run_graph(checkpointer=saver)
-        snapshot = graph.get_state(_config(thread_id))
-        if not snapshot.values:
-            raise LookupError(f"Agent run {run_id} has no checkpoint to resume")
-        return graph.invoke(None, _config(thread_id))
+    return _run_coroutine(lambda: resume_agent_run_async(run_id))

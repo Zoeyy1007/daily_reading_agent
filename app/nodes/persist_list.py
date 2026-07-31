@@ -8,14 +8,15 @@ from app.services.agent_stage_service import persist_agent_reading_list
 
 
 def persist_list_node(
-    state: DailyRunState, session: Session, settings: Settings
+    state: DailyRunState, session: Session, _settings: Settings
 ) -> dict[str, object]:
     reading_list = persist_agent_reading_list(
         session,
         user_id=state["user_id"],
         list_date=date.fromisoformat(state["list_date"]),
         selected=state.get("selected_scores", []),
-        settings=settings,
+        target_article_count=state["target_article_count"],
+        target_reading_minutes=state["target_reading_minutes"],
         regenerate=state.get("regenerate", False),
     )
     return {

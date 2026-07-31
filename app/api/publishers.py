@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.api.dependencies import get_current_user_id
 from app.db.models import Publisher, Source
 from app.db.session import get_db
 from app.schemas.source import (
@@ -16,7 +17,11 @@ from app.schemas.source import (
     SourceRead,
 )
 
-router = APIRouter(prefix="/publishers", tags=["publishers"])
+router = APIRouter(
+    prefix="/publishers",
+    tags=["publishers"],
+    dependencies=[Depends(get_current_user_id)],
+)
 DBSession = Annotated[Session, Depends(get_db)]
 
 

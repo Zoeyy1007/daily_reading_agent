@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import Article, ArticleStatus, Publisher, Source
+from app.db.session import SessionLocal
 from app.services.article_extractor import ArticleExtractor, ExtractionFailedError
 from app.sources.rss import RSSItem, fetch_rss
+from app.utils.concurrency import bounded_to_thread_map
 from app.utils.timing import timed_stage
 
 logger = logging.getLogger("daily_reading.ingestion")
@@ -265,6 +267,50 @@ def discover_all_enabled_sources(session: Session) -> list[IngestionStats]:
                 IngestionStats(source_id=source_id, error=str(exc)[:4000])
             )
     return results
+
+
+async def discover_all_enabled_sources_async(
+    session: Session, *, max_concurrency: int
+) -> list[IngestionStats]:
+    """Poll sources concurrently without sharing the caller's DB session."""
+    source_ids = list(
+        session.scalars(
+            select(Source.id)
+            .join(Publisher, Publisher.id == Source.publisher_id)
+            .where(Source.enabled.is_(True), Publisher.enabled.is_(True))
+        )
+    )
+
+    def discover_one(source_id: int) -> IngestionStats:
+        with SessionLocal() as worker_session:
+            try:
+                return discover_source(worker_session, source_id)
+            except Exception as exc:
+                worker_session.rollback()
+                logger.exception(
+                    "RSS source discovery failed; skipping source_id=%s", source_id
+                )
+                return IngestionStats(source_id=source_id, error=str(exc)[:4000])
+
+    return await bounded_to_thread_map(
+        source_ids, discover_one, max_concurrency=max_concurrency
+    )
+
+
+async def extract_articles_async(
+    article_ids: list[int], *, max_concurrency: int
+) -> tuple[int, int]:
+    """Extract independent articles concurrently using one session per worker."""
+    unique_ids = list(dict.fromkeys(article_ids))
+
+    def extract_one(article_id: int) -> tuple[int, int]:
+        with SessionLocal() as worker_session:
+            return extract_articles(worker_session, [article_id])
+
+    results = await bounded_to_thread_map(
+        unique_ids, extract_one, max_concurrency=max_concurrency
+    )
+    return sum(item[0] for item in results), sum(item[1] for item in results)
 
 
 def ingest_all_enabled_sources(session: Session) -> list[IngestionStats]:

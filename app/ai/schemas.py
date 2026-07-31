@@ -1,6 +1,7 @@
+from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -12,6 +13,49 @@ class ClassificationResult(StrictModel):
     is_news: bool
     topics: list[str] = Field(max_length=8)
     confidence: float = Field(ge=0, le=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_content_type(cls, value: object) -> object:
+        """Keep provider vocabulary inside the application's fixed taxonomy."""
+        if not isinstance(value, dict):
+            return value
+        raw_content_type = value.get("content_type")
+        if not isinstance(raw_content_type, str):
+            return value
+
+        normalized = raw_content_type.strip().casefold().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "news": "news",
+            "breaking_news": "news",
+            "news_report": "news",
+            "report": "news",
+            "reporting": "news",
+            "current_events": "news",
+            "analysis": "analysis",
+            "news_analysis": "analysis",
+            "explainer": "analysis",
+            "in_depth": "analysis",
+            "opinion": "opinion",
+            "op_ed": "opinion",
+            "editorial": "opinion",
+            "commentary": "opinion",
+            "tutorial": "tutorial",
+            "how_to": "tutorial",
+            "guide": "tutorial",
+            "step_by_step": "tutorial",
+            "other": "other",
+        }
+        canonical = aliases.get(normalized)
+        if canonical is None:
+            # A model sometimes puts a subject such as "politics" or
+            # "technology" in content_type. Subjects belong in topics. When the
+            # same output says this is news, preserve that signal; otherwise the
+            # last-resort category is other.
+            canonical = "news" if value.get("is_news") is True else "other"
+        normalized_value = dict(value)
+        normalized_value["content_type"] = canonical
+        return normalized_value
 
 
 class ExtractedClaim(StrictModel):
@@ -74,8 +118,64 @@ class SupplementCoverageAssessment(StrictModel):
     disagreement_or_uncertainty: CoverageDecision
 
 
+SearchPurpose = Literal[
+    "earlier_events_and_timeline",
+    "affected_people_and_effects",
+    "missing_information_from_other_reporting",
+    "disagreement_or_uncertainty",
+]
+
+
 class SearchToolArguments(StrictModel):
-    query: str = Field(min_length=3, max_length=500)
+    purpose: SearchPurpose
+    event: str = Field(min_length=3, max_length=240)
+    entities: list[str] = Field(max_length=8)
+    keywords: list[str] = Field(min_length=1, max_length=10)
+    start_date: date | None
+    end_date: date | None
+    preferred_domains: list[str] = Field(max_length=8)
+    max_results: int = Field(ge=1, le=8)
+
+    @field_validator("event")
+    @classmethod
+    def normalize_event(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if len(normalized) < 3:
+            raise ValueError("event must contain meaningful text")
+        return normalized
+
+    @field_validator("entities", "keywords")
+    @classmethod
+    def normalize_search_terms(cls, values: list[str]) -> list[str]:
+        normalized = [" ".join(value.split()) for value in values]
+        if any(not value or len(value) > 100 for value in normalized):
+            raise ValueError("search terms must contain 1 to 100 characters")
+        if len({value.casefold() for value in normalized}) != len(normalized):
+            raise ValueError("search terms must be unique")
+        return normalized
+
+    @field_validator("preferred_domains")
+    @classmethod
+    def normalize_domains(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip().casefold().removeprefix("www.") for value in values]
+        if any(
+            not value
+            or "://" in value
+            or "/" in value
+            or " " in value
+            or "." not in value
+            for value in normalized
+        ):
+            raise ValueError("preferred_domains must contain hostnames only")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("preferred_domains must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "SearchToolArguments":
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("start_date must be on or before end_date")
+        return self
 
 
 class CollectChunkArguments(StrictModel):

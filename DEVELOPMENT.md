@@ -204,11 +204,18 @@ Manual fetches run immediately and do not wait for the scheduler.
 Configure `.env`:
 
 ```dotenv
-SCHEDULER_ENABLED=true
+SCHEDULER_ENABLED=false
 RSS_POLL_MINUTES=30
+DAILY_LIST_HOUR=8
+SCHEDULER_TIMEZONE=America/Los_Angeles
 ```
 
 Restart FastAPI after changing `.env`.
+
+Keep `SCHEDULER_ENABLED=false` while testing. When it is changed to `true`, RSS
+polling starts and daily agent runs are created at 8:00 AM Pacific time. The
+`America/Los_Angeles` timezone is daylight-saving aware, so this means 8:00 AM PST
+in winter and 8:00 AM PDT in summer.
 
 Currently, APScheduler runs every `RSS_POLL_MINUTES` and fetches feeds only when both
 their publisher and source `enabled` values are `true`. The individual
@@ -235,11 +242,19 @@ PREFERRED_TOPICS=technology,science
 PREFERRED_SOURCE_IDS=
 BLOCKED_SOURCE_IDS=
 DAILY_ARTICLE_TARGET=5
+EXPECTED_READING_MINUTES_PER_ARTICLE=6
 DAILY_READING_MINUTES=30
 READING_WORDS_PER_MINUTE=225
-DAILY_LIST_HOUR=7
+DAILY_LIST_HOUR=8
 SCHEDULER_TIMEZONE=America/Los_Angeles
 ```
+
+`DAILY_ARTICLE_TARGET` and `EXPECTED_READING_MINUTES_PER_ARTICLE` are defaults for
+new users. A signed-in user can change both values under **User Settings**. The
+daily time budget is derived as `list length x expected minutes per article`.
+The expected minutes also guide length-fit scoring; each selected article's displayed
+reading time is still calculated from its actual word count and
+`READING_WORDS_PER_MINUTE`.
 
 Comma-separated source settings use numeric source IDs, for example:
 
@@ -312,7 +327,7 @@ Other endpoints:
 - `GET /daily-reading/{list_date}`, such as `/daily-reading/2026-07-25`
 
 When scheduling is enabled, a list is regenerated each day at `DAILY_LIST_HOUR` in
-`SCHEDULER_TIMEZONE`.
+`SCHEDULER_TIMEZONE`. It is currently disabled in `.env` for manual testing.
 
 ### Inspect the generated list in pgAdmin
 
@@ -1446,11 +1461,131 @@ http://127.0.0.1:8000/
 The home route displays today's reading list. Article routes load full extracted text,
 the completed supplement for the matching reading-list item, citation links, saved
 state, and like/dislike feedback. The reason dialog accepts a listed reason or no
-reason, which sends JSON `null`. The navigation drawer currently contains Today and
-Saved. FastAPI's API documentation remains available at `/docs`.
+reason, which sends JSON `null`. The navigation drawer contains Today, Saved,
+Scoring System, and User Settings. FastAPI's API documentation remains available
+at `/docs`.
+
+### Local account login
+
+Apply authentication migrations after pulling the login-system changes:
+
+```powershell
+alembic upgrade head
+```
+
+Open `http://127.0.0.1:8000/` and choose **Log in** or **Create account**.
+User IDs require at least 2 characters and passwords require at least 6. Passwords
+are stored only as salted `scrypt` hashes. Browser login sessions are stored in
+PostgreSQL and sent through an HTTP-only cookie.
+
+User Settings shows the login ID and a masked password marker. Existing passwords
+cannot be displayed because scrypt is one-way. The change-password form verifies
+the current password before sending `PATCH /auth/password`; eye buttons reveal only
+the current/new values the user is actively typing.
+
+The same page lets a user set the daily list length (1-10) and expected reading
+minutes per article (2-25). These values are stored on the `users` row. They affect
+the next list generation; use `regenerate: true` to rebuild an existing same-day
+list with the new preferences.
+
+The first account created after this migration adopts the old credential-less
+`Local User` row, preserving its reading lists, saved articles, and feedback.
+
+For local HTTP development, keep `AUTH_COOKIE_SECURE=false`. Set it to `true` when
+the app is served through HTTPS.
+
+Inspect accounts without displaying password hashes:
+
+```sql
+SELECT id, login_id, display_name, is_active, created_at
+FROM users
+ORDER BY id;
+```
+
+Inspect active login sessions:
+
+```sql
+SELECT id, user_id, expires_at, created_at
+FROM auth_sessions
+ORDER BY created_at DESC;
+```
 
 Run the frontend shell test with:
 
 ```powershell
 python -m pytest tests/test_frontend.py -q
 ```
+
+Run authentication tests with:
+
+```powershell
+python -m pytest tests/test_auth.py -q
+```
+
+### Website usage metrics
+
+Apply migration `20260731_10`, then restart FastAPI:
+
+```powershell
+alembic upgrade head
+fastapi dev app/main.py
+```
+
+The frontend records page views with a random browser UUID. Only its SHA-256 hash,
+normalized route, optional signed-in user ID, and timestamp are stored. IP
+addresses and plaintext browser IDs are not stored. Browsers with Do Not Track
+enabled are skipped.
+
+The User Settings page shows the last 30 days of metrics only to login IDs listed
+in `ANALYTICS_ADMIN_LOGIN_IDS`:
+
+- **Page views:** every recorded website route view.
+- **Approx. unique visitors:** distinct browser identifiers; one person using two
+  browsers counts twice, and clearing browser storage creates a new identifier.
+- **Signed-in users:** distinct database users who viewed at least one route.
+
+Relevant environment settings:
+
+```dotenv
+ANALYTICS_ENABLED=true
+ANALYTICS_ADMIN_LOGIN_IDS=18
+ANALYTICS_RETENTION_DAYS=365
+```
+
+Read the same aggregate through `GET /analytics/summary?days=30`. Raw development
+inspection:
+
+```sql
+SELECT created_at, user_id, path
+FROM usage_events
+ORDER BY created_at DESC
+LIMIT 100;
+```
+# Benchmark clustering accuracy
+
+The synthetic benchmark contains 24 labeled reports covering eight distinct
+events. It uses the configured embedding API without writing the articles to the
+database:
+
+```powershell
+python scripts/benchmark_clustering.py
+```
+
+Open the three generated CSV files in `metrics/results/`. The summary shows the
+configured-threshold result; the details file shows every assignment; and the
+threshold-sweep file helps tune `STORY_CLUSTER_SIMILARITY_THRESHOLD`.
+Every run is also appended to `clustering_benchmark_history.csv`, and timestamped
+copies are kept under `metrics/results/clustering_runs/` for later comparisons.
+
+## Structured supplement searches
+
+The supplement planner no longer writes an unrestricted query. It returns a
+strict search request containing the active coverage purpose, article-specific
+event, entities, keywords, optional date range, preferred domains, and requested
+result count. Python builds the final query and validates it against the active
+coverage ledger and `config/supplement_tools.yaml` before executing a tool.
+
+Suggested domains can only narrow the YAML allowlist, and requested results are
+capped by both search and collection policies. The structured request is saved
+inside `supplement_runs.tool_history`; the constructed query is saved on each
+`supplement_evidence_items.query` row.

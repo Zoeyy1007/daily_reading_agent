@@ -1,4 +1,5 @@
 from app.db.models.article import Article, ArticleStatus
+from app.db.models.analytics import UsageEvent
 from app.db.models.agent_run import (
     AgentRunStatus,
     DailyRun,
@@ -38,10 +39,11 @@ from app.db.models.supplement import (
     SupplementRun,
     SupplementStatus,
 )
-from app.db.models.user import User
+from app.db.models.user import AuthSession, User
 
 __all__ = [
     "Article",
+    "AuthSession",
     "ArticleStatus",
     "AgentRunStatus",
     "DailyRun",
@@ -73,4 +75,5 @@ __all__ = [
     "SupplementRun",
     "SupplementStatus",
     "User",
+    "UsageEvent",
 ]

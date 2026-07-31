@@ -69,6 +69,7 @@ def score_article_ids(
     settings: Settings,
     *,
     now: datetime | None = None,
+    target_article_reading_minutes: int | None = None,
 ) -> list[CandidateScore]:
     current_time = now or datetime.now(UTC)
     articles = _load_articles(session, article_ids)
@@ -81,7 +82,12 @@ def score_article_ids(
     preferences_by_feature = preference_index(preferences)
     results: list[CandidateScore] = []
     for article in articles:
-        base = score_article(article, settings, now=current_time)
+        base = score_article(
+            article,
+            settings,
+            now=current_time,
+            expected_reading_minutes=target_article_reading_minutes,
+        )
         personal = score_personalization(
             features_by_article[article.id], preferences_by_feature, settings
         )
@@ -142,7 +148,8 @@ def persist_agent_reading_list(
     user_id: int,
     list_date: date,
     selected: list[CandidateScore],
-    settings: Settings,
+    target_article_count: int,
+    target_reading_minutes: int,
     regenerate: bool,
 ) -> DailyReadingList:
     existing = get_daily_reading_list(session, list_date, user_id)
@@ -152,15 +159,15 @@ def persist_agent_reading_list(
         reading_list = existing
         reading_list.items.clear()
         session.flush()
-        reading_list.target_article_count = settings.daily_article_target
-        reading_list.target_reading_minutes = settings.daily_reading_minutes
+        reading_list.target_article_count = target_article_count
+        reading_list.target_reading_minutes = target_reading_minutes
         reading_list.status = DailyReadingStatus.BUILDING.value
     else:
         reading_list = DailyReadingList(
             user_id=user_id,
             list_date=list_date,
-            target_article_count=settings.daily_article_target,
-            target_reading_minutes=settings.daily_reading_minutes,
+            target_article_count=target_article_count,
+            target_reading_minutes=target_reading_minutes,
             actual_article_count=0,
             actual_reading_minutes=0,
             status=DailyReadingStatus.BUILDING.value,

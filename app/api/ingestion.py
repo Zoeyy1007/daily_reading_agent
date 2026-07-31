@@ -4,11 +4,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import get_current_user_id
 from app.db.session import get_db
 from app.schemas.source import IngestionResult
 from app.services.ingestion_service import ingest_all_enabled_sources
 
-router = APIRouter(prefix="/ingestion", tags=["ingestion"])
+router = APIRouter(
+    prefix="/ingestion",
+    tags=["ingestion"],
+    dependencies=[Depends(get_current_user_id)],
+)
 DBSession = Annotated[Session, Depends(get_db)]
 
 

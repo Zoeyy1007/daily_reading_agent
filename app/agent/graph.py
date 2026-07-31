@@ -1,6 +1,7 @@
 import json
+import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from time import perf_counter
 from typing import Any
 
@@ -43,7 +44,10 @@ from app.services.run_service import (
 )
 
 logger = logging.getLogger("daily_reading.agent.graph")
-NodeHandler = Callable[[DailyRunState, Session, Settings], dict[str, object]]
+NodeResult = dict[str, object]
+NodeHandler = Callable[
+    [DailyRunState, Session, Settings], NodeResult | Awaitable[NodeResult]
+]
 
 DEFAULT_HANDLERS: dict[str, NodeHandler] = {
     "load_settings": load_settings_node,
@@ -83,51 +87,91 @@ def tracked_node(
     *,
     session_factory: Callable[[], Session] = SessionLocal,
     settings_provider: Callable[[], Settings] = get_settings,
-) -> Callable[[DailyRunState], dict[str, object]]:
-    def execute(state: DailyRunState) -> dict[str, object]:
+) -> Callable[[DailyRunState], NodeResult | Awaitable[NodeResult]]:
+    def finish_success(
+        state: DailyRunState,
+        session: Session,
+        event_id: int,
+        started: float,
+        updates: NodeResult,
+    ) -> NodeResult:
+        name_for_log = name
+        run_id = state["run_id"]
+        merged = {**state, **updates}
+        elapsed_ms = elapsed_milliseconds(started)
+        finish_run_event(
+            session,
+            event_id,
+            status=RunEventStatus.COMPLETE,
+            elapsed_ms=elapsed_ms,
+            message=_event_message(updates),
+        )
+        update_run_progress(
+            session,
+            run_id,
+            node_name=name_for_log,
+            expansion_round=int(merged.get("expansion_round", 0)),
+            selected_count=len(merged.get("selected_article_ids", [])),
+            reading_list_id=merged.get("reading_list_id"),
+            complete=name_for_log == "finalize",
+        )
+        logger.info(
+            "timing stage=agent.%s status=ok elapsed_ms=%.2f run_id=%s",
+            name_for_log,
+            elapsed_ms,
+            run_id,
+        )
+        return updates
+
+    def finish_failure(
+        state: DailyRunState,
+        session: Session,
+        event_id: int,
+        started: float,
+        exc: Exception,
+    ) -> None:
+        session.rollback()
+        elapsed_ms = elapsed_milliseconds(started)
+        with session_factory() as error_session:
+            finish_run_event(
+                error_session,
+                event_id,
+                status=RunEventStatus.FAILED,
+                elapsed_ms=elapsed_ms,
+                message=str(exc)[:4000],
+            )
+        fail_run(state["run_id"], name, exc)
+
+    if inspect.iscoroutinefunction(handler):
+        async def execute_async(state: DailyRunState) -> NodeResult:
+            started = perf_counter()
+            run_id = state["run_id"]
+            with session_factory() as session:
+                event = start_run_event(session, run_id, name)
+                try:
+                    updates = await handler(state, session, settings_provider())
+                    return finish_success(
+                        state, session, event.id, started, updates
+                    )
+                except Exception as exc:
+                    finish_failure(state, session, event.id, started, exc)
+                    raise
+
+        execute_async.__name__ = name
+        return execute_async
+
+    def execute(state: DailyRunState) -> NodeResult:
         started = perf_counter()
         run_id = state["run_id"]
         with session_factory() as session:
             event = start_run_event(session, run_id, name)
             try:
                 updates = handler(state, session, settings_provider())
-                merged = {**state, **updates}
-                elapsed_ms = elapsed_milliseconds(started)
-                finish_run_event(
-                    session,
-                    event.id,
-                    status=RunEventStatus.COMPLETE,
-                    elapsed_ms=elapsed_ms,
-                    message=_event_message(updates),
-                )
-                update_run_progress(
-                    session,
-                    run_id,
-                    node_name=name,
-                    expansion_round=int(merged.get("expansion_round", 0)),
-                    selected_count=len(merged.get("selected_article_ids", [])),
-                    reading_list_id=merged.get("reading_list_id"),
-                    complete=name == "finalize",
-                )
-                logger.info(
-                    "timing stage=agent.%s status=ok elapsed_ms=%.2f run_id=%s",
-                    name,
-                    elapsed_ms,
-                    run_id,
-                )
-                return updates
+                if inspect.isawaitable(updates):
+                    raise TypeError(f"Node {name} unexpectedly returned an awaitable")
+                return finish_success(state, session, event.id, started, updates)
             except Exception as exc:
-                session.rollback()
-                elapsed_ms = elapsed_milliseconds(started)
-                with session_factory() as error_session:
-                    finish_run_event(
-                        error_session,
-                        event.id,
-                        status=RunEventStatus.FAILED,
-                        elapsed_ms=elapsed_ms,
-                        message=str(exc)[:4000],
-                    )
-                fail_run(run_id, name, exc)
+                finish_failure(state, session, event.id, started, exc)
                 raise
 
     execute.__name__ = name
@@ -154,13 +198,34 @@ def build_daily_run_graph(
                 settings_provider=settings_provider,
             )
         else:
-            def node(
-                state: DailyRunState,
-                selected_handler: NodeHandler = handler,
-            ) -> dict[str, object]:
-                return selected_handler(state, None, settings_provider())  # type: ignore[arg-type]
+            if inspect.iscoroutinefunction(handler):
+                async def async_node(
+                    state: DailyRunState,
+                    selected_handler: NodeHandler = handler,
+                ) -> NodeResult:
+                    result = selected_handler(
+                        state, None, settings_provider()  # type: ignore[arg-type]
+                    )
+                    if not inspect.isawaitable(result):
+                        raise TypeError("Async node handler returned a non-awaitable")
+                    return await result
 
-            node.__name__ = name
+                async_node.__name__ = name
+                node = async_node
+            else:
+                def sync_node(
+                    state: DailyRunState,
+                    selected_handler: NodeHandler = handler,
+                ) -> NodeResult:
+                    result = selected_handler(
+                        state, None, settings_provider()  # type: ignore[arg-type]
+                    )
+                    if inspect.isawaitable(result):
+                        raise TypeError("Sync node handler returned an awaitable")
+                    return result
+
+                sync_node.__name__ = name
+                node = sync_node
         if name in {
             "collect",
             "extract",

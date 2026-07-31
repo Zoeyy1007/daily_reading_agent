@@ -39,6 +39,16 @@ class FeedbackReason(StrEnum):
     GOOD_WRITING = "good_writing"
     NOT_INTERESTED = "not_interested"
     TOO_TECHNICAL = "too_technical"
+    TOPIC_TECHNOLOGY = "topic_technology"
+    TOPIC_ARTIFICIAL_INTELLIGENCE = "topic_artificial_intelligence"
+    TOPIC_SCIENCE = "topic_science"
+    TOPIC_BUSINESS = "topic_business"
+    TOPIC_POLITICS = "topic_politics"
+    TOPIC_HEALTH = "topic_health"
+    TOPIC_CLIMATE = "topic_climate"
+    TOPIC_SPORTS = "topic_sports"
+    TOPIC_CULTURE = "topic_culture"
+    TOPIC_CRIME = "topic_crime"
 
 
 class ArticleFeatureType(StrEnum):
@@ -58,7 +68,10 @@ class FeedbackEvent(Base):
         ),
         CheckConstraint(
             "reason IS NULL OR reason IN ('too_long', 'too_repetitive', 'strong_evidence', "
-            "'good_writing', 'not_interested', 'too_technical')",
+            "'good_writing', 'not_interested', 'too_technical', "
+            "'topic_technology', 'topic_artificial_intelligence', 'topic_science', "
+            "'topic_business', 'topic_politics', 'topic_health', 'topic_climate', "
+            "'topic_sports', 'topic_culture', 'topic_crime')",
             name="ck_feedback_events_reason",
         ),
         Index("ix_feedback_events_user_created", "user_id", "created_at"),

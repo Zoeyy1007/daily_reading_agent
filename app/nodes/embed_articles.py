@@ -2,16 +2,15 @@ from sqlalchemy.orm import Session
 
 from app.agent.state import DailyRunState
 from app.config import Settings
-from app.services.phase_five_service import embed_articles
+from app.services.phase_five_service import embed_articles_async
 
 
-def embed_articles_node(
-    state: DailyRunState, session: Session, settings: Settings
+async def embed_articles_node(
+    state: DailyRunState, _session: Session, settings: Settings
 ) -> dict[str, object]:
     if not settings.phase_five_enabled:
         return {}
-    count = embed_articles(
-        session,
+    count = await embed_articles_async(
         state.get("eligible_article_ids", []),
         run_id=state["run_id"],
         settings=settings,
