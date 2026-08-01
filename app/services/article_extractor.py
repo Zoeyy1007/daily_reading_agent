@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 import httpx
 import trafilatura
 
+from app.services.article_cleaner import clean_article_text, prune_page_html
+
 
 class ExtractionFailedError(RuntimeError):
     pass
@@ -38,9 +40,7 @@ class ArticleExtractor:
 
     @staticmethod
     def _normalize(text: str) -> str:
-        return "\n\n".join(
-            line.strip() for line in text.splitlines() if line.strip()
-        )
+        return clean_article_text(text)
 
     def _result(
         self,
@@ -76,7 +76,7 @@ class ArticleExtractor:
             content_type = response.headers.get("content-type", "").lower()
             if "html" not in content_type and "xhtml" not in content_type:
                 raise ValueError(f"unsupported content type: {content_type or 'unknown'}")
-            html_text = response.text
+            html_text = prune_page_html(response.text)
             raw = trafilatura.extract(
                 html_text,
                 url=str(response.url),

@@ -77,7 +77,7 @@ Paste the Session pooler URL only when PowerShell prompts for it:
 ```powershell
 $env:SUPABASE_DB_URL = Read-Host "Paste the Supabase Session pooler URL"
 
-docker compose exec -e SUPABASE_DB_URL db sh -lc `
+docker compose exec -e "SUPABASE_DB_URL=$env:SUPABASE_DB_URL" db sh -lc `
   'pg_restore --dbname="$SUPABASE_DB_URL" --jobs=2 --no-owner --no-privileges --verbose /tmp/daily_reading.dump'
 ```
 
@@ -88,10 +88,10 @@ but table, constraint, sequence, or data errors are not. Inspect the final
 Update statistics and verify the restored tables:
 
 ```powershell
-docker compose exec -e SUPABASE_DB_URL db sh -lc `
+docker compose exec -e "SUPABASE_DB_URL=$env:SUPABASE_DB_URL" db sh -lc `
   'psql "$SUPABASE_DB_URL" -c "VACUUM ANALYZE;"'
 
-docker compose exec -e SUPABASE_DB_URL db sh -lc `
+docker compose exec -e "SUPABASE_DB_URL=$env:SUPABASE_DB_URL" db sh -lc `
   'psql "$SUPABASE_DB_URL" -c "SELECT version_num FROM alembic_version; SELECT count(*) AS articles FROM articles; SELECT count(*) AS users FROM users;"'
 
 Remove-Item Env:SUPABASE_DB_URL
@@ -193,4 +193,3 @@ GET /daily-reading/today
 Then check Railway logs and Supabase's Table Editor. If `/health` fails, check
 the Railway deployment logs first; it normally means `DATABASE_URL`, SSL,
 networking, or the pre-deploy migration needs attention.
-
