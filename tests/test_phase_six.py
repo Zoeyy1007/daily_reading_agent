@@ -4,6 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.ai.client import OpenAICompatibleClient, StructuredOutputError
+from app.ai.direct_providers import DeepSeekSupplementProvider
+from app.ai.providers import ProviderResult
 from app.ai.schemas import (
     CollectChunkArguments,
     CollectChunkToolCall,
@@ -622,3 +624,29 @@ def test_structured_client_exposes_exact_validation_error(monkeypatch) -> None:
 
     assert "supported" in captured.value.validation_error
     assert '"supported":"true"' in captured.value.response_preview
+
+
+def test_supplement_provider_serializes_dates_in_tool_history() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def structured_chat(self, **kwargs):
+            captured.update(kwargs)
+            return ProviderResult(
+                value="unused", request_id=None, input_tokens=1, output_tokens=1, elapsed_ms=1
+            )
+
+    provider = DeepSeekSupplementProvider(  # type: ignore[arg-type]
+        FakeClient(), model="test-model", max_tokens=1000, thinking=False
+    )
+    provider.plan(
+        article_title="Policy announced",
+        article_content="A policy was announced.",
+        cluster_event="Policy announcement",
+        evidence=[],
+        tool_history=[{"start_date": date(2026, 7, 1)}],
+        available_tools=[],
+        coverage_targets={},
+    )
+
+    assert "2026-07-01" in str(captured["user_prompt"])

@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     supplement_max_output_tokens: int = Field(default=4000, ge=500)
     supplement_max_iterations: int = Field(default=4, ge=1, le=10)
     supplement_max_concurrency: int = Field(default=2, ge=1, le=8)
+    supplement_planning_max_attempts: int = Field(default=3, ge=1, le=5)
     supplement_verification_max_attempts: int = Field(default=3, ge=1, le=5)
     supplement_word_ratio: float = Field(default=0.5, gt=0, le=0.5)
     supplement_retention_days: int = Field(default=30, ge=1, le=30)

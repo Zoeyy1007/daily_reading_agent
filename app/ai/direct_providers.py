@@ -126,7 +126,7 @@ class StructuredEvidenceProvider:
                 "claim IDs from each pair; do not substitute article IDs or claim text. Keep the "
                 "batch summary concise."
             ),
-            user_prompt=json.dumps(payload, ensure_ascii=False),
+            user_prompt=json.dumps(payload, ensure_ascii=False, default=str),
             output_model=EvidenceComparisonResult,
             max_tokens=self.max_tokens,
             thinking=self.thinking,
@@ -186,7 +186,9 @@ class DeepSeekSupplementProvider:
                 "You are a bounded research planner. First assess exactly four coverage areas: "
                 "earlier events/timeline, affected people/effects, missing information from "
                 "other reporting, and disagreement/uncertainty. Do not assess official basis or "
-                "latest developments as separate gaps. Return strict structured output. If no "
+                "latest developments as separate gaps. Every coverage area MUST contain exactly "
+                "needed (boolean), reason (string), and evidence_ids (integer array), even when "
+                "needed is false. Return strict structured output. If no "
                 "supplement is needed, set supplement_needed=false and next_step=stop. For a "
                 "coverage decision, evidence_ids may contain at most three distinct IDs from "
                 "saved_evidence that directly address that area. Treat coverage_targets as the "
@@ -205,7 +207,7 @@ class DeepSeekSupplementProvider:
                 "After tool results, choose another tool step, compose, or stop. You are not a "
                 "factual source and must never provide missing facts yourself."
             ),
-            user_prompt=json.dumps(payload, ensure_ascii=False),
+            user_prompt=json.dumps(payload, ensure_ascii=False, default=str),
             output_model=SupplementPlan,
             max_tokens=min(self.max_tokens, 2500),
             thinking=self.thinking,
@@ -236,7 +238,7 @@ class DeepSeekSupplementProvider:
                 "that prediction or analysis; preserve that attribution. Stay within the total "
                 "word budget. Return no cards when the evidence is insufficient."
             ),
-            user_prompt=json.dumps(payload, ensure_ascii=False),
+            user_prompt=json.dumps(payload, ensure_ascii=False, default=str),
             output_model=SupplementDraft,
             max_tokens=self.max_tokens,
             thinking=self.thinking,
@@ -263,12 +265,13 @@ class DeepSeekSupplementProvider:
                 "claims, unattributed predictions, synthesis not stated by a source, invalid "
                 "evidence IDs, and partial support. Return exactly one entry for every draft "
                 "statement using its zero-based card_index and statement_index. Every requested "
-                "field is mandatory and must use the exact JSON data type in the schema. A "
+                "field is mandatory and must use the exact JSON data type in the schema. Keep "
+                "each reason concise and below 500 characters. A "
                 "supported statement requires one or more valid evidence_ids; an unsupported "
                 "statement must use an empty evidence_ids array. If a previous validation error "
                 "is supplied, correct it in the new response."
             ),
-            user_prompt=json.dumps(payload, ensure_ascii=False),
+            user_prompt=json.dumps(payload, ensure_ascii=False, default=str),
             output_model=SupplementVerification,
             max_tokens=self.max_tokens,
             thinking=self.thinking,

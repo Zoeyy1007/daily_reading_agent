@@ -727,31 +727,76 @@ def generate_supplement_for_item(
                 len(evidence_payload),
                 available_search_names,
             )
-            try:
-                plan_result = provider.plan(
-                    article_title=article.title,
-                    article_content=article.content_text or "",
-                    cluster_event=cluster_event,
-                    evidence=evidence_payload,
-                    tool_history=history,
-                    available_tools=available_tools,
-                    coverage_targets=_coverage_target_payload(
-                        target_gaps=target_gaps,
-                        evidence_by_area=evidence_by_area,
-                        satisfied_areas=satisfied_areas,
-                    ),
+            plan_result: ProviderResult[SupplementPlan] | None = None
+            planning_feedback: str | None = None
+            for planning_attempt in range(
+                1, settings.supplement_planning_max_attempts + 1
+            ):
+                attempt_hash = _fingerprint(
+                    plan_hash, str(planning_attempt), planning_feedback or ""
                 )
-            except Exception as exc:
-                _record_model_failure(
-                    session,
-                    run_id=daily_run_id,
-                    role="supplement_planning",
-                    provider=provider,
-                    input_hash=plan_hash,
-                    error=exc,
-                    settings=settings,
-                )
-                raise
+                retry_history = history
+                if planning_feedback:
+                    retry_history = [
+                        *history,
+                        {
+                            "status": "structured_output_retry",
+                            "validation_error": planning_feedback,
+                            "instruction": (
+                                "Return every required field with the exact schema type."
+                            ),
+                        },
+                    ]
+                try:
+                    plan_result = provider.plan(
+                        article_title=article.title,
+                        article_content=article.content_text or "",
+                        cluster_event=cluster_event,
+                        evidence=evidence_payload,
+                        tool_history=retry_history,
+                        available_tools=available_tools,
+                        coverage_targets=_coverage_target_payload(
+                            target_gaps=target_gaps,
+                            evidence_by_area=evidence_by_area,
+                            satisfied_areas=satisfied_areas,
+                        ),
+                    )
+                    break
+                except StructuredOutputError as exc:
+                    planning_feedback = str(exc)[:4000]
+                    _record_model_failure(
+                        session,
+                        run_id=daily_run_id,
+                        role="supplement_planning",
+                        provider=provider,
+                        input_hash=attempt_hash,
+                        error=exc,
+                        settings=settings,
+                    )
+                    logger.warning(
+                        "supplement stage=planning status=retry item_id=%s "
+                        "iteration=%s attempt=%s/%s error=%s",
+                        item_id,
+                        iteration,
+                        planning_attempt,
+                        settings.supplement_planning_max_attempts,
+                        exc,
+                    )
+                    if planning_attempt >= settings.supplement_planning_max_attempts:
+                        raise
+                except Exception as exc:
+                    _record_model_failure(
+                        session,
+                        run_id=daily_run_id,
+                        role="supplement_planning",
+                        provider=provider,
+                        input_hash=attempt_hash,
+                        error=exc,
+                        settings=settings,
+                    )
+                    raise
+            if plan_result is None:
+                raise RuntimeError("Planning attempts ended without a result")
             _record_model_result(
                 session,
                 run_id=daily_run_id,
@@ -816,7 +861,7 @@ def generate_supplement_for_item(
                         ),
                     }
                 )
-                run.tool_history = json.dumps(history, ensure_ascii=False)
+                run.tool_history = json.dumps(history, ensure_ascii=False, default=str)
                 session.commit()
                 logger.info(
                     "supplement stage=termination status=research_complete "
@@ -862,13 +907,15 @@ def generate_supplement_for_item(
                 )
             except ToolCallRejected as exc:
                 result_payload = {
-                    "tool_calls": [call.model_dump() for call in plan.tool_calls],
+                    "tool_calls": [
+                        call.model_dump(mode="json") for call in plan.tool_calls
+                    ],
                     "status": "rejected",
                     "error": str(exc),
                     "results": [],
                 }
                 history.append(result_payload)
-                run.tool_history = json.dumps(history, ensure_ascii=False)
+                run.tool_history = json.dumps(history, ensure_ascii=False, default=str)
                 session.commit()
                 logger.warning(
                     "supplement stage=tool_validation status=rejected item_id=%s "
@@ -958,7 +1005,9 @@ def generate_supplement_for_item(
             ]
             history.append(
                 {
-                    "tool_calls": [call.model_dump() for call in plan.tool_calls],
+                    "tool_calls": [
+                        call.model_dump(mode="json") for call in plan.tool_calls
+                    ],
                     "status": "complete",
                     "saved_count": added,
                     "results": new_evidence,
