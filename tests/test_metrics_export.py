@@ -121,4 +121,17 @@ def test_step_detail_pairs_time_and_volume_for_every_node(tmp_path):
     assert embedded["seconds"] == "9"
     assert embedded["volume"] == "10"
     assert embedded["volume_unit"] == "embeddings"
+    assert embedded["seconds_per_unit"] == "0.900"
     assert "extract" in rows
+
+
+def test_summary_reports_time_per_processed_unit(tmp_path):
+    snapshots = [_snapshot(3, node_seconds=20, response_seconds=5)]
+    output = tmp_path / "summary.csv"
+
+    _write_summary(output, snapshots, _base_metric_definitions())
+
+    with output.open(encoding="utf-8-sig", newline="") as handle:
+        rows = {row["metric"]: row for row in csv.DictReader(handle)}
+    assert rows["node.embed_articles.seconds_per_unit"]["run_3"] == "2.000"
+    assert rows["batch.article_embedding.seconds_per_embedding"]["run_3"] == "2.000"

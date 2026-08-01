@@ -1055,6 +1055,7 @@ SUPPLEMENT_MODEL=deepseek-v4-pro
 SUPPLEMENT_THINKING=false
 SUPPLEMENT_MAX_OUTPUT_TOKENS=4000
 SUPPLEMENT_MAX_ITERATIONS=4
+SUPPLEMENT_PLANNING_MAX_ATTEMPTS=3
 SUPPLEMENT_VERIFICATION_MAX_ATTEMPTS=3
 SUPPLEMENT_WORD_RATIO=0.5
 SUPPLEMENT_RETENTION_DAYS=30
@@ -1576,6 +1577,61 @@ configured-threshold result; the details file shows every assignment; and the
 threshold-sweep file helps tune `STORY_CLUSTER_SIMILARITY_THRESHOLD`.
 Every run is also appended to `clustering_benchmark_history.csv`, and timestamped
 copies are kept under `metrics/results/clustering_runs/` for later comparisons.
+
+## Run performance and quality evaluation
+
+Export one or more persisted agent runs and calculate both total time and time per
+processed article, chunk, embedding, claim, cluster, source, or supplement item:
+
+```powershell
+python scripts/export_run_metrics.py --run-ids 16 17 18 --suffix comparison_1
+```
+
+Or use the latest three completed runs:
+
+```powershell
+python scripts/export_run_metrics.py --latest 3 --suffix latest_3
+```
+
+The exporter writes three files under `metrics/results/`:
+
+- `run_metrics_summary_<suffix>.csv`: each run, cross-run average, workload,
+  total seconds, and seconds per unit.
+- `run_step_metrics_<suffix>.csv`: one row per node with time, volume, attempts,
+  and `seconds_per_unit`.
+- `llm_calls_detail_<suffix>.csv`: individual provider response time and tokens.
+
+Use runs with comparable inputs and cache state. A warm rerun may reuse existing
+classifications, embeddings, chunks, and claims, so it is not directly comparable
+to a cold run.
+
+Run the labeled end-to-end AI quality benchmark with the configured real models:
+
+```powershell
+python scripts/benchmark_agent_quality.py --suffix baseline
+```
+
+This makes paid classification, embedding, claim, evidence-comparison, and
+supplement-planning calls. It never writes mock articles to PostgreSQL. To omit
+supplement-planning calls:
+
+```powershell
+python scripts/benchmark_agent_quality.py --skip-supplement --suffix no_supplement
+```
+
+Outputs under `metrics/results/`:
+
+- `agent_quality_summary_<suffix>.csv`: classification accuracy/macro-F1,
+  clustering pairwise precision/recall/F1 and purity, claim keyword recall and
+  grounding, evidence-comparison accuracy, retrieval Precision@K/Recall@K/MRR,
+  supplement-decision accuracy, tool-choice accuracy, gap F1, and per-unit time.
+- `agent_quality_details_<suffix>.csv`: expected versus predicted output for every
+  labeled case, including model reasoning fields that are safe to display.
+
+The fixture is `tests/fixtures/agent_quality_benchmark.json`. Add cases there as
+real failures are discovered. Retrieval labels mark which candidate chunks answer
+each query; the benchmark ranks them using the production normalized BM25 and
+vector weights, then reports Precision@K, Recall@K, and mean reciprocal rank.
 
 ## Structured supplement searches
 

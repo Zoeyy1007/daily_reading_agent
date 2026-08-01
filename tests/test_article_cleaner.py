@@ -22,6 +22,24 @@ def test_prune_page_html_removes_navigation_and_related_regions() -> None:
     assert "Subscribe" not in cleaned
 
 
+def test_prune_page_html_removes_advertisement_containers() -> None:
+    html = """
+    <main>
+      <div data-component="ad-slot">Sponsored retirement offers</div>
+      <article>
+        <p>The facility is being constructed inside the mountain.</p>
+        <div data-component="advertisement-block">Another advertisement</div>
+      </article>
+    </main>
+    """
+
+    cleaned = prune_page_html(html)
+
+    assert "facility is being constructed" in cleaned
+    assert "Sponsored retirement offers" not in cleaned
+    assert "Another advertisement" not in cleaned
+
+
 def test_clean_article_text_removes_media_and_repeated_category_noise() -> None:
     text = """
     Subscribe
@@ -61,3 +79,37 @@ def test_clean_article_text_does_not_truncate_unrelated_explore_more_phrase() ->
     )
 
     assert "article continues" in cleaned
+
+
+def test_clean_article_text_keeps_link_words_without_href_targets() -> None:
+    text = (
+        "The building was damaged after "
+        "[a suspected sabotage operation in July 2020.]"
+        "(https://www.bbc.co.uk/news/example)\n\n"
+        "Ali Akbar Salehi [said in September 2020]\n"
+        "(https://www.example.com/a-very-long-source-url) that a new facility "
+        "would be built."
+    )
+
+    cleaned = clean_article_text(text)
+
+    assert "a suspected sabotage operation in July 2020." in cleaned
+    assert "said in September 2020" in cleaned
+    assert "that a new facility would be built" in cleaned
+    assert "https://" not in cleaned
+    assert "](" not in cleaned
+
+
+def test_clean_article_text_removes_markdown_images() -> None:
+    text = (
+        "The site is buried inside the mountain.\n\n"
+        "![Image 2: Satellite view of the site](https://ichef.example/image.jpg)\n\n"
+        "Construction continued in June."
+    )
+
+    cleaned = clean_article_text(text)
+
+    assert "Satellite view" not in cleaned
+    assert "image.jpg" not in cleaned
+    assert "site is buried" in cleaned
+    assert "Construction continued" in cleaned

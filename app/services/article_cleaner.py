@@ -24,6 +24,10 @@ _NOISE_ATTRIBUTE_PARTS = (
     "social-share",
     "newsletter",
     "subscription",
+    "advertisement",
+    "advertisement-block",
+    "ad-slot",
+    "ad-unit",
     "cookie-banner",
     "consent-banner",
     "media-player",
@@ -61,7 +65,12 @@ _NOISE_HEADINGS = {
     "top stories",
 }
 _DURATION_PATTERN = re.compile(r"^(?:\d{1,2}:)?\d{1,2}:\d{2}$")
-_MARKDOWN_LINK_PATTERN = re.compile(r"^\[([^]]+)]\([^)]*\)$")
+_MARKDOWN_IMAGE_PATTERN = re.compile(
+    r"!\[[^]]*]\s*\(\s*https?://[^)]*\)", flags=re.IGNORECASE | re.DOTALL
+)
+_MARKDOWN_LINK_PATTERN = re.compile(
+    r"\[([^]]*)]\s*\(\s*https?://[^)]*\)", flags=re.IGNORECASE | re.DOTALL
+)
 
 
 def _attribute_text(element: Tag) -> str:
@@ -92,18 +101,19 @@ def prune_page_html(html: str) -> str:
     return str(soup)
 
 
-def _visible_label(line: str) -> str:
-    match = _MARKDOWN_LINK_PATTERN.fullmatch(line)
-    return match.group(1).strip() if match else line
+def _strip_markdown_targets(text: str) -> str:
+    without_images = _MARKDOWN_IMAGE_PATTERN.sub("", text)
+    return _MARKDOWN_LINK_PATTERN.sub(lambda match: match.group(1), without_images)
 
 
 def clean_article_text(text: str) -> str:
     """Remove high-confidence residual navigation and embedded-media boilerplate."""
+    text = _strip_markdown_targets(text)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     folded_counts = Counter(line.casefold() for line in lines if len(line.split()) <= 5)
     cleaned: list[str] = []
     for line in lines:
-        label = _visible_label(line)
+        label = line
         folded = label.casefold().strip(" :")
         if folded in _EXACT_NOISE_LINES or folded in _NOISE_HEADINGS:
             continue

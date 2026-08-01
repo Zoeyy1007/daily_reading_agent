@@ -179,7 +179,10 @@ def extract_articles(session: Session, article_ids: list[int]) -> tuple[int, int
                     source_id=article.source_id,
                     article_id=article.id,
                 ):
-                    extracted = extractor.extract(article.canonical_url)
+                    extracted = extractor.extract(
+                        article.canonical_url,
+                        title=article.title,
+                    )
                 article.content_text = extracted.content
                 article.author = extracted.author or article.author
                 article.title = extracted.title or article.title

@@ -1,0 +1,185 @@
+{
+  "articles": [
+    {
+      "id": "bus-news-1",
+      "numeric_id": 1001,
+      "expected_cluster": "electric_bus_policy",
+      "expected_content_type": "news",
+      "expected_is_news": true,
+      "title": "City council approves electric bus transition",
+      "content": "The Harbor City Council voted 8-3 on Tuesday to replace 120 diesel buses with electric models by 2028. Transit director Maya Chen said the first 30 buses will serve routes in neighborhoods with the highest air pollution. The city estimated the program will cost $96 million, including charging equipment.",
+      "expected_claims": [
+        {"required_terms": ["120", "electric", "2028"]},
+        {"required_terms": ["30", "air pollution"]},
+        {"required_terms": ["$96 million"]}
+      ]
+    },
+    {
+      "id": "bus-news-2",
+      "numeric_id": 1002,
+      "expected_cluster": "electric_bus_policy",
+      "expected_content_type": "news",
+      "expected_is_news": true,
+      "title": "Harbor City sets 2028 deadline for zero-emission bus fleet",
+      "content": "Harbor City lawmakers approved an $96 million transit plan in an 8-3 vote. The plan purchases 120 electric buses and supporting chargers before the end of 2028. Officials said an initial group of 30 vehicles will be assigned to communities that currently experience severe diesel pollution.",
+      "expected_claims": [
+        {"required_terms": ["$96 million", "8-3"]},
+        {"required_terms": ["120", "2028"]},
+        {"required_terms": ["30", "diesel pollution"]}
+      ]
+    },
+    {
+      "id": "flood-news-1",
+      "numeric_id": 2001,
+      "expected_cluster": "river_flood",
+      "expected_content_type": "news",
+      "expected_is_news": true,
+      "title": "River flooding forces evacuation of three towns",
+      "content": "Emergency officials ordered about 4,000 residents of three Pine River towns to evacuate on Thursday. The river reached 7.2 metres after two days of heavy rain. County spokesperson Luis Ortega said two schools were opened as temporary shelters and no deaths had been reported.",
+      "expected_claims": [
+        {"required_terms": ["4,000", "three", "evacuate"]},
+        {"required_terms": ["7.2 metres"]},
+        {"required_terms": ["two schools", "shelters"]}
+      ]
+    },
+    {
+      "id": "flood-news-2",
+      "numeric_id": 2002,
+      "expected_cluster": "river_flood",
+      "expected_content_type": "news",
+      "expected_is_news": true,
+      "title": "Shelters open as Pine River reaches record level",
+      "content": "Three communities along the Pine River were placed under mandatory evacuation orders affecting roughly 4,000 people. Officials measured the river at 7.2 metres Thursday. Two local schools are operating as shelters, while authorities said they had received no reports of fatalities.",
+      "expected_claims": [
+        {"required_terms": ["three", "4,000", "evacuation"]},
+        {"required_terms": ["7.2 metres", "Thursday"]},
+        {"required_terms": ["two", "schools", "shelters"]}
+      ]
+    },
+    {
+      "id": "bus-opinion",
+      "numeric_id": 3001,
+      "expected_cluster": "bus_opinion",
+      "expected_content_type": "opinion",
+      "expected_is_news": false,
+      "title": "Electric buses are the investment our city owes its children",
+      "content": "The council should move faster than its timid 2028 target. In my view, clean buses are a moral obligation, and opponents who focus only on the price ignore the health of children living beside congested roads.",
+      "expected_claims": []
+    },
+    {
+      "id": "charger-tutorial",
+      "numeric_id": 3002,
+      "expected_cluster": "charger_tutorial",
+      "expected_content_type": "tutorial",
+      "expected_is_news": false,
+      "title": "How to prepare an electric vehicle for overnight charging",
+      "content": "First park close enough that the cable is not stretched. Next inspect the connector for damage, plug it into the vehicle, and confirm the charging indicator is illuminated. Finally set a charge limit in the vehicle menu and check the estimated completion time.",
+      "expected_claims": []
+    },
+    {
+      "id": "housing-analysis",
+      "numeric_id": 3003,
+      "expected_cluster": "housing_analysis",
+      "expected_content_type": "analysis",
+      "expected_is_news": false,
+      "title": "Why the latest housing numbers do not signal a full recovery",
+      "content": "Monthly home sales rose, but the increase needs context. Seasonal comparisons, a temporary decline in mortgage rates and unusually weak figures last year make the headline gain appear stronger. Inventory remains below its long-term average, suggesting the market is stabilizing rather than fully recovering.",
+      "expected_claims": []
+    }
+  ],
+  "evidence_pairs": [
+    {
+      "pair_id": 1,
+      "left_claim_id": 11,
+      "right_claim_id": 12,
+      "left_article_id": 1001,
+      "right_article_id": 1002,
+      "left": "The city will purchase 120 electric buses by 2028.",
+      "right": "The approved plan provides 120 electric buses before the end of 2028.",
+      "expected_relationship": "equivalent"
+    },
+    {
+      "pair_id": 2,
+      "left_claim_id": 21,
+      "right_claim_id": 22,
+      "left_article_id": 2001,
+      "right_article_id": 2002,
+      "left": "Officials reported that no deaths had occurred.",
+      "right": "Authorities confirmed twelve people died in the flood.",
+      "expected_relationship": "contradicts"
+    },
+    {
+      "pair_id": 3,
+      "left_claim_id": 31,
+      "right_claim_id": 32,
+      "left_article_id": 1001,
+      "right_article_id": 1002,
+      "left": "The first buses will serve neighborhoods with severe air pollution.",
+      "right": "Officials said diesel pollution is severe in the communities receiving the first buses.",
+      "expected_relationship": "supports"
+    },
+    {
+      "pair_id": 4,
+      "left_claim_id": 41,
+      "right_claim_id": 42,
+      "left_article_id": 1001,
+      "right_article_id": 2001,
+      "left": "The electric bus program will cost $96 million.",
+      "right": "The Pine River reached 7.2 metres on Thursday.",
+      "expected_relationship": "unrelated"
+    }
+  ],
+  "retrieval_cases": [
+    {
+      "id": "bus-impact",
+      "query": "Which neighborhoods receive the first electric buses and why?",
+      "chunks": [
+        {"id": "b1", "relevant": true, "text": "The first 30 electric buses will serve neighborhoods with the highest measured air pollution."},
+        {"id": "b2", "relevant": true, "text": "Officials prioritized communities exposed to severe diesel exhaust for the initial vehicles."},
+        {"id": "b3", "relevant": false, "text": "The council meeting began at six in the evening and included routine zoning votes."},
+        {"id": "b4", "relevant": false, "text": "Heavy rain pushed the Pine River above its previous record."},
+        {"id": "b5", "relevant": false, "text": "Apple announced a faster processor for its newest phone."}
+      ]
+    },
+    {
+      "id": "flood-shelter",
+      "query": "Where can evacuated Pine River residents find temporary shelter?",
+      "chunks": [
+        {"id": "f1", "relevant": true, "text": "Two local schools opened as temporary shelters for residents evacuated from Pine River towns."},
+        {"id": "f2", "relevant": true, "text": "County officials directed displaced families to shelters operating inside two schools."},
+        {"id": "f3", "relevant": false, "text": "The river gauge recorded a height of 7.2 metres on Thursday."},
+        {"id": "f4", "relevant": false, "text": "The electric bus fleet requires new charging equipment."},
+        {"id": "f5", "relevant": false, "text": "Mortgage rates declined temporarily during the monthly housing survey."}
+      ]
+    }
+  ],
+  "supplement_cases": [
+    {
+      "id": "incomplete-policy",
+      "title": "City approves electric bus transition",
+      "cluster_event": "Harbor City electric bus transition",
+      "content": "The Harbor City Council approved a plan to replace diesel buses with electric vehicles by 2028. The vote was 8-3.",
+      "expected_needed": true,
+      "expected_search_tool": "search_local",
+      "expected_gaps": ["earlier_events_and_timeline", "affected_people_and_effects", "missing_information_from_other_reporting"]
+    },
+    {
+      "id": "complete-flood-report",
+      "title": "Pine River evacuation order explained",
+      "cluster_event": "Pine River flood evacuation",
+      "content": "After two days of record rainfall, the Pine River reached 7.2 metres Thursday. Officials ordered roughly 4,000 residents in three towns to evacuate because forecasts showed the river could rise another half metre overnight. Two schools opened as shelters, buses were provided for residents without cars, and the county said no deaths were reported. The weather service said forecasts remain uncertain because another storm may move north of the basin.",
+      "expected_needed": false,
+      "expected_search_tool": null,
+      "expected_gaps": []
+    },
+    {
+      "id": "missing-uncertainty",
+      "title": "Agency announces new water restriction",
+      "cluster_event": "Regional water restriction announcement",
+      "content": "The regional agency announced that outdoor watering will be limited to two days each week beginning Monday. Violations may result in fines.",
+      "expected_needed": true,
+      "expected_search_tool": "search_local",
+      "expected_gaps": ["affected_people_and_effects", "missing_information_from_other_reporting", "disagreement_or_uncertainty"]
+    }
+  ]
+}

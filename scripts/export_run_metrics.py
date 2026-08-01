@@ -146,12 +146,51 @@ def _sum_stats(*names: str) -> Callable[[RunSnapshot], int]:
     return value
 
 
+def _node_stat_sum(node: str, *names: str) -> Callable[[RunSnapshot], int]:
+    """Sum one node's own workload counters across graph revisits/attempts."""
+    def value(snapshot: RunSnapshot) -> int:
+        total = 0
+        for event in snapshot.events:
+            if event.node_name != node or getattr(event, "status", "complete") != "complete":
+                continue
+            if not event.message:
+                continue
+            try:
+                payload = json.loads(event.message)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            total += sum(
+                int(payload.get(name, 0))
+                for name in names
+                if isinstance(payload.get(name, 0), int | float)
+            )
+        return total
+
+    return value
+
+
 def _node_seconds(name: str) -> Callable[[RunSnapshot], float | None]:
     return lambda snapshot: snapshot.node_seconds.get(name)
 
 
 def _node_attempts(name: str) -> Callable[[RunSnapshot], int]:
     return lambda snapshot: snapshot.node_attempts.get(name, 0)
+
+
+def _seconds_per_unit(
+    seconds: Callable[[RunSnapshot], float | None],
+    volume: Callable[[RunSnapshot], object | None],
+) -> Callable[[RunSnapshot], float | None]:
+    def value(snapshot: RunSnapshot) -> float | None:
+        elapsed = seconds(snapshot)
+        processed = volume(snapshot)
+        if elapsed is None or not isinstance(processed, int | float) or processed <= 0:
+            return None
+        return elapsed / float(processed)
+
+    return value
 
 
 def _wall_seconds(snapshot: RunSnapshot) -> float | None:
@@ -182,79 +221,79 @@ def _node_volume_definitions() -> dict[
             "users",
             "User preference records loaded.",
         ),
-        "collect": (_stat("sources_polled", default=0), "sources", "RSS sources polled."),
+        "collect": (_node_stat_sum("collect", "sources_polled"), "sources", "RSS sources polled."),
         "exact_deduplicate": (
-            _stat("exact_unique_candidates", default=0),
+            _node_stat_sum("exact_deduplicate", "exact_unique_candidates"),
             "articles",
             "New candidate articles retained after URL/GUID deduplication.",
         ),
         "extract": (
-            _sum_stats("extracted", "extraction_failed"),
+            _node_stat_sum("extract", "extracted", "extraction_failed"),
             "articles",
             "Articles submitted to full-text extraction.",
         ),
         "content_deduplicate": (
-            _sum_stats("content_unique_candidates", "content_duplicates"),
+            _node_stat_sum("content_deduplicate", "content_unique_candidates", "content_duplicates"),
             "articles",
             "Articles checked for duplicate extracted content.",
         ),
         "classify": (
-            _stat("classified_candidates", default=0),
+            _node_stat_sum("classify", "classified_candidates"),
             "articles",
             "Articles processed by local classification.",
         ),
         "filter": (
-            _stat("classified_candidates", default=0),
+            _node_stat_sum("filter", "classified_candidates"),
             "articles",
             "Classified articles checked against hard filters.",
         ),
         "ai_classify": (
-            _stat("ai_classified", default=0),
+            _node_stat_sum("ai_classify", "ai_classified"),
             "articles",
             "Articles newly classified by the LLM.",
         ),
         "embed_articles": (
-            _stat("articles_embedded", default=0),
+            _node_stat_sum("embed_articles", "articles_embedded"),
             "embeddings",
             "Article embeddings created.",
         ),
         "cluster_stories": (
-            _stat("eligible_candidates", default=0),
+            _node_stat_sum("cluster_stories", "eligible_candidates"),
             "articles",
             "Eligible articles considered for story clustering.",
         ),
         "chunk_articles": (
-            _stat("chunks_created", default=0),
+            _node_stat_sum("chunk_articles", "chunks_created"),
             "chunks",
             "Article chunks created.",
         ),
         "embed_chunks": (
-            _stat("chunks_embedded", default=0),
+            _node_stat_sum("embed_chunks", "chunks_embedded"),
             "embeddings",
             "Chunk embeddings created.",
         ),
         "extract_claims": (
-            _stat("claims_created", default=0),
+            _node_stat_sum("extract_claims", "claims_created"),
             "claims",
             "Grounded claims created.",
         ),
         "compare_evidence": (
-            _stat("clusters_compared", default=0),
+            _node_stat_sum("compare_evidence", "clusters_compared"),
             "clusters",
             "Story clusters compared for evidence differences.",
         ),
         "apply_evidence": (
-            _stat("post_evidence_candidates", default=0),
+            _node_stat_sum("apply_evidence", "post_evidence_candidates"),
             "articles",
             "Representative candidates retained after evidence comparison.",
         ),
         "personalize": (
-            _stat("scored_candidates", default=0),
+            _node_stat_sum("personalize", "scored_candidates"),
             "articles",
             "Candidate articles scored and personalized.",
         ),
         "select": (
-            _stat("scored_candidates", default=0),
+            _node_stat_sum("select", "scored_candidates"),
             "articles",
             "Scored candidates considered under count and time budgets.",
         ),
@@ -264,7 +303,7 @@ def _node_volume_definitions() -> dict[
             "Database candidates added by the currently implemented expansion tool.",
         ),
         "persist_list": (
-            _stat("final_article_count", default=0),
+            _node_stat_sum("persist_list", "final_article_count"),
             "articles",
             "Selected articles written to the daily list.",
         ),
@@ -339,17 +378,17 @@ def _base_metric_definitions() -> list[MetricDefinition]:
     )
 
     batch_metrics = (
-        ("rss_collection", "collect", _stat("sources_polled", default=0), "sources", "RSS sources processed as one run-level batch."),
-        ("article_extraction", "extract", _sum_stats("extracted", "extraction_failed"), "articles", "Articles extracted or failed as one batch; no per-article timing."),
-        ("local_classification", "classify", _stat("classified_candidates", default=0), "articles", "Articles locally classified as one batch."),
-        ("ai_classification", "ai_classify", _stat("ai_classified", default=0), "articles", "Articles newly sent to LLM classification."),
-        ("article_embedding", "embed_articles", _stat("articles_embedded", default=0), "embeddings", "Article embeddings created during the node."),
-        ("story_clustering", "cluster_stories", _stat("eligible_candidates", default=0), "articles", "Eligible articles considered for clustering."),
-        ("chunk_creation", "chunk_articles", _stat("chunks_created", default=0), "chunks", "Chunks created during the node."),
-        ("chunk_embedding", "embed_chunks", _stat("chunks_embedded", default=0), "embeddings", "Chunk embeddings created during the node."),
-        ("claim_extraction", "extract_claims", _stat("claims_created", default=0), "claims", "Claims created during retrieval, LLM extraction, and claim embedding."),
-        ("evidence_comparison", "compare_evidence", _stat("clusters_compared", default=0), "clusters", "Clusters compared during the evidence node."),
-        ("personalization", "personalize", _stat("scored_candidates", default=0), "articles", "Articles scored and personalized."),
+        ("rss_collection", "collect", _node_stat_sum("collect", "sources_polled"), "sources", "RSS sources processed as one run-level batch."),
+        ("article_extraction", "extract", _node_stat_sum("extract", "extracted", "extraction_failed"), "articles", "Articles extracted or failed as one batch; no per-article timing."),
+        ("local_classification", "classify", _node_stat_sum("classify", "classified_candidates"), "articles", "Articles locally classified as one batch."),
+        ("ai_classification", "ai_classify", _node_stat_sum("ai_classify", "ai_classified"), "articles", "Articles newly sent to LLM classification."),
+        ("article_embedding", "embed_articles", _node_stat_sum("embed_articles", "articles_embedded"), "embeddings", "Article embeddings created during the node."),
+        ("story_clustering", "cluster_stories", _node_stat_sum("cluster_stories", "eligible_candidates"), "articles", "Eligible articles considered for clustering."),
+        ("chunk_creation", "chunk_articles", _node_stat_sum("chunk_articles", "chunks_created"), "chunks", "Chunks created during the node."),
+        ("chunk_embedding", "embed_chunks", _node_stat_sum("embed_chunks", "chunks_embedded"), "embeddings", "Chunk embeddings created during the node."),
+        ("claim_extraction", "extract_claims", _node_stat_sum("extract_claims", "claims_created"), "claims", "Claims created during retrieval, LLM extraction, and claim embedding."),
+        ("evidence_comparison", "compare_evidence", _node_stat_sum("compare_evidence", "clusters_compared"), "clusters", "Clusters compared during the evidence node."),
+        ("personalization", "personalize", _node_stat_sum("personalize", "scored_candidates"), "articles", "Articles scored and personalized."),
         ("supplement_generation", "supplement", _supplement_items, "items", "Reading-list items processed for supplements."),
     )
     for label, node, count_value, count_unit, description in batch_metrics:
@@ -367,6 +406,14 @@ def _base_metric_definitions() -> list[MetricDefinition]:
                 "seconds",
                 f"Total {node} node time across all attempts.",
                 _node_seconds(node),
+            )
+        )
+        definitions.append(
+            MetricDefinition(
+                f"batch.{label}.seconds_per_{count_unit.rstrip('s')}",
+                f"seconds/{count_unit.rstrip('s')}",
+                f"{node} node time divided by its recorded workload volume.",
+                _seconds_per_unit(_node_seconds(node), count_value),
             )
         )
 
@@ -392,6 +439,12 @@ def _base_metric_definitions() -> list[MetricDefinition]:
                     "attempts",
                     "Number of RunEvent attempts recorded for this node.",
                     _node_attempts(node),
+                ),
+                MetricDefinition(
+                    f"node.{node}.seconds_per_unit",
+                    f"seconds/{volume_unit.rstrip('s')}",
+                    "Total node seconds divided by recorded volume; blank when volume is zero.",
+                    _seconds_per_unit(_node_seconds(node), volume_value),
                 ),
             )
         )
@@ -554,6 +607,7 @@ def _write_step_details(path: Path, snapshots: list[RunSnapshot]) -> None:
                 "volume",
                 "volume_unit",
                 "volume_description",
+                "seconds_per_unit",
             )
         )
         for snapshot in snapshots:
@@ -569,6 +623,11 @@ def _write_step_details(path: Path, snapshots: list[RunSnapshot]) -> None:
                         _format_value(volume_value(snapshot)),
                         volume_unit,
                         volume_description,
+                        _format_value(
+                            _seconds_per_unit(
+                                _node_seconds(node), volume_value
+                            )(snapshot)
+                        ),
                     )
                 )
 
